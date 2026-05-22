@@ -1,3 +1,7 @@
 temp_gemini_manager/*
 temp_codex_manager/*
 .antigravitycli/*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/

@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+
+def _home_from_env(name: str, fallback: str) -> Path:
+    return Path(os.path.expanduser(os.environ.get(name, fallback)))
+
+
+AGM_HOME = _home_from_env("AGM_HOME", "~/.antigravity-manager")
+DEFAULT_BACKUP_DIR = AGM_HOME / "backups"
+COOLDOWN_REGISTRY_PATH = AGM_HOME / "cooldown.json"
+SAFETY_BACKUP_DIR = AGM_HOME / "safety_backups"
+
+GEMINI_HOME = _home_from_env("GEMINI_HOME", "~/.gemini")
+ANTIGRAVITY_HOME = _home_from_env(
+    "ANTIGRAVITY_HOME",
+    str(GEMINI_HOME / "antigravity-cli"),
+)
+
+GEMINI_IDENTITY_FILES = (
+    "google_accounts.json",
+    "oauth_creds.json",
+    "state.json",
+    "settings.json",
+    "installation_id",
+)
+
+ANTIGRAVITY_AUTH_FILES = (
+    "antigravity-oauth-token",
+    "installation_id",
+    "settings.json",
+    "keybindings.json",
+)
+
+EXCLUDED_TOP_LEVEL_NAMES = {
+    "log",
+    "updater",
+    "knowledge",
+}
+
+DEFAULT_COOLDOWN_DISPLAY_LIMIT = 200
+DEFAULT_DECISION_MODEL = "Gemini 3.5 Flash"
