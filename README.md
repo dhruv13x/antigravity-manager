@@ -1,11 +1,16 @@
 # antigravity-manager
 
 Account backup, restore, cooldown, and status manager for Antigravity CLI.
-
 ## Commands
 
 ```bash
-uv run agm status
+agm                    # Defaults to 'cooldown'
+agm -s                 # Shortcut for 'status'
+agm -c                 # Shortcut for 'cooldown'
+agm -v                 # Show version
+agm -h                 # Show help
+```
+
 uv run agm backup
 uv run agm backup --auth-only
 uv run agm backup --decision-model "Gemini 3.5 Flash"

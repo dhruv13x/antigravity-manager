@@ -26,8 +26,10 @@ from .ui import console
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agm", description="Manage Antigravity CLI accounts, backups, and cooldowns.")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("-s", "--status", action="store_true", help="Shortcut for 'status' command.")
+    parser.add_argument("-c", "--cooldown", action="store_true", help="Shortcut for 'cooldown' command (default).")
+    subparsers = parser.add_subparsers(dest="command", required=False)
 
     status_parser = subparsers.add_parser("status", help="Capture and parse live Antigravity /usage status.")
     status_parser.add_argument("--input-file", help="Read captured status text from a file.")
@@ -238,6 +240,29 @@ def handle_doctor(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+
+    # Handle shortcuts and default command
+    if args.status:
+        args.command = "status"
+        # Populate defaults for status if not provided via subcommand
+        if not hasattr(args, "input_file"):
+            args.input_file = None
+            args.json = False
+            args.agy_command = "agy"
+            args.tmux_session_name = None
+            args.tmux_cols = 140
+            args.tmux_rows = 45
+            args.startup_timeout_seconds = 30.0
+            args.usage_timeout_seconds = 30.0
+    elif args.cooldown or args.command is None:
+        args.command = "cooldown"
+        # Populate defaults for cooldown if not provided via subcommand
+        if not hasattr(args, "backup_dir"):
+            args.backup_dir = str(DEFAULT_BACKUP_DIR)
+            args.limit = DEFAULT_COOLDOWN_DISPLAY_LIMIT
+            args.decision_model = DEFAULT_DECISION_MODEL
+            args.json = False
+
     handlers = {
         "status": handle_status,
         "backup": handle_backup,
