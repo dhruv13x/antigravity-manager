@@ -4,7 +4,6 @@ from datetime import datetime
 
 from antigravity_manager.status import parse_live_status_text
 
-
 SAMPLE_USAGE = """
 drewpoul13x@gmail.com (Google AI Pro)
 

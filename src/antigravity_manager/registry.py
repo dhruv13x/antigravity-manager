@@ -27,7 +27,9 @@ def save_registry(data: dict[str, dict[str, Any]], path: Path = COOLDOWN_REGISTR
 def update_registry_from_status(status: LiveStatus, *, dry_run: bool = False) -> None:
     registry = load_registry()
     next_refreshes = [model.refresh_at for model in status.models if model.refresh_at is not None]
-    next_available_at = max(next_refreshes).isoformat() if next_refreshes else status.captured_at.isoformat()
+    next_available_at = (
+        max(next_refreshes).isoformat() if next_refreshes else status.captured_at.isoformat()
+    )
     registry[status.email] = {
         "schema_version": 1,
         "product": "antigravity",

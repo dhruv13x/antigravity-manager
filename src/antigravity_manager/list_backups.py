@@ -27,7 +27,7 @@ def metadata_path_for_archive(archive_path: Path) -> Path:
 def load_metadata_for_archive(archive_path: Path) -> dict[str, Any]:
     metadata_path = metadata_path_for_archive(archive_path)
     if metadata_path.exists():
-        return json.loads(metadata_path.read_text(encoding="utf-8"))
+        return dict(json.loads(metadata_path.read_text(encoding="utf-8")))
 
     member_name = archive_path.name.replace(".tar.gz", ".metadata.json")
     with tarfile.open(archive_path, "r:gz") as tar:
@@ -35,7 +35,7 @@ def load_metadata_for_archive(archive_path: Path) -> dict[str, Any]:
         extracted = tar.extractfile(member)
         if extracted is None:
             raise FileNotFoundError(f"Metadata member could not be read: {member_name}")
-        return json.loads(extracted.read().decode("utf-8"))
+        return dict(json.loads(extracted.read().decode("utf-8")))
 
 
 def build_backup_entry(archive_path: Path) -> BackupEntry | None:
@@ -125,4 +125,11 @@ def print_entries_table(entries: list[BackupEntry]) -> None:
             entry.captured_at,
             entry.next_available_at,
         )
-    console.print(Panel(table, title="[bold bright_cyan]Antigravity Backups[/]", border_style="bright_cyan", expand=False))
+    console.print(
+        Panel(
+            table,
+            title="[bold bright_cyan]Antigravity Backups[/]",
+            border_style="bright_cyan",
+            expand=False,
+        )
+    )

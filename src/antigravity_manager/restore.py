@@ -10,8 +10,6 @@ from typing import Any
 
 from .config import (
     ANTIGRAVITY_AUTH_FILES,
-    ANTIGRAVITY_HOME,
-    DEFAULT_BACKUP_DIR,
     GEMINI_HOME,
     GEMINI_IDENTITY_FILES,
     SAFETY_BACKUP_DIR,
@@ -42,7 +40,11 @@ def resolve_archive_path(args: Any) -> Path:
         archive_path = Path(args.from_archive).expanduser()
     elif getattr(args, "email", None):
         latest_link = Path(args.backup_dir).expanduser() / f"{args.email}-latest-antigravity.tar.gz"
-        archive_path = latest_link if latest_link.exists() else latest_backup_archive(Path(args.backup_dir).expanduser(), email=args.email)
+        archive_path = (
+            latest_link
+            if latest_link.exists()
+            else latest_backup_archive(Path(args.backup_dir).expanduser(), email=args.email)
+        )
     else:
         archive_path = latest_backup_archive(Path(args.backup_dir).expanduser())
     if not archive_path.exists():
@@ -97,7 +99,9 @@ def copy_member_file(src: Path, dest: Path, *, dry_run: bool) -> Path | None:
     return dest
 
 
-def restore_auth_only(extracted_dir: Path, antigravity_home: Path, gemini_home: Path, *, dry_run: bool) -> list[Path]:
+def restore_auth_only(
+    extracted_dir: Path, antigravity_home: Path, gemini_home: Path, *, dry_run: bool
+) -> list[Path]:
     restored: list[Path] = []
     for name in ANTIGRAVITY_AUTH_FILES:
         dest = antigravity_home / name
@@ -151,7 +155,9 @@ def snapshot_current_state(
     return snapshot_dir
 
 
-def restore_full(extracted_dir: Path, antigravity_home: Path, gemini_home: Path, *, dry_run: bool, force: bool) -> Path | None:
+def restore_full(
+    extracted_dir: Path, antigravity_home: Path, gemini_home: Path, *, dry_run: bool, force: bool
+) -> Path | None:
     src = extracted_dir / "antigravity-cli"
     if not src.exists():
         raise ValueError("Archive does not contain antigravity-cli state.")
@@ -162,7 +168,10 @@ def restore_full(extracted_dir: Path, antigravity_home: Path, gemini_home: Path,
     if antigravity_home.exists():
         if not force:
             SAFETY_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-            safety_path = SAFETY_BACKUP_DIR / f"antigravity-cli.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            safety_path = (
+                SAFETY_BACKUP_DIR
+                / f"antigravity-cli.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            )
             shutil.move(str(antigravity_home), str(safety_path))
         else:
             shutil.rmtree(antigravity_home)

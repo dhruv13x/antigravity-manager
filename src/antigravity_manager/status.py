@@ -45,7 +45,8 @@ class LiveStatus:
     models: tuple[ModelQuotaStatus, ...]
 
 
-def status_to_dict(status: LiveStatus) -> dict:
+from typing import Any
+def status_to_dict(status: LiveStatus) -> dict[str, Any]:
     data = asdict(status)
     data["captured_at"] = status.captured_at.isoformat()
     for model in data["models"]:
@@ -86,7 +87,9 @@ def wait_for_prompt(pane_id: str, *, timeout_seconds: float) -> str:
             if stable_reads >= 3:
                 return output
             if time.time() - start > timeout_seconds:
-                raise AntigravityStatusError("Timed out waiting for fully loaded Antigravity startup.")
+                raise AntigravityStatusError(
+                    "Timed out waiting for fully loaded Antigravity startup."
+                )
             time.sleep(0.5)
 
 
@@ -119,7 +122,10 @@ def capture_tmux_status_text(
     if session_name is None:
         session_name = f"agy_status_{os.getpid()}"
 
-    if subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True).returncode == 0:
+    if (
+        subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True).returncode
+        == 0
+    ):
         run_command(["tmux", "kill-session", "-t", session_name], check=False)
 
     session = run_command(
@@ -179,7 +185,9 @@ def is_model_name(line: str) -> bool:
         return False
     if "%" in stripped:
         return False
-    if stripped.startswith(("Refreshes in", "Quota available", "esc to cancel", "↑/↓", "? for shortcuts")):
+    if stripped.startswith(
+        ("Refreshes in", "Quota available", "esc to cancel", "↑/↓", "? for shortcuts")
+    ):
         return False
     return bool(MODEL_NAME_RE.match(stripped))
 
