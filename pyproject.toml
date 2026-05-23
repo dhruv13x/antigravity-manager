@@ -96,7 +96,7 @@ source = ["src/antigravity_manager"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 20
+fail_under = 90
 precision = 2
 
 [tool.ruff]
