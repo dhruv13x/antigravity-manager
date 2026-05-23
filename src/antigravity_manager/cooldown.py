@@ -63,7 +63,9 @@ def read_active_email(gemini_home: Path = GEMINI_HOME) -> str | None:
 
 
 def evaluate_model(model: dict[str, Any], *, now: datetime) -> ModelCooldown:
-    refresh_at = parse_dt(model.get("refresh_at")) if isinstance(model.get("refresh_at"), str) else None
+    refresh_at = (
+        parse_dt(str(model.get("refresh_at"))) if isinstance(model.get("refresh_at"), str) else None
+    )
     is_available = bool(model.get("is_available"))
     remaining_seconds = int((refresh_at - now).total_seconds()) if refresh_at else 0
     if is_available:
@@ -77,7 +79,9 @@ def evaluate_model(model: dict[str, Any], *, now: datetime) -> ModelCooldown:
     )
 
 
-def find_decision_model(models: tuple[ModelCooldown, ...], model_pattern: str) -> ModelCooldown | None:
+def find_decision_model(
+    models: tuple[ModelCooldown, ...], model_pattern: str
+) -> ModelCooldown | None:
     pattern = model_pattern.lower()
     matches = [model for model in models if pattern in model.name.lower()]
     if not matches:
@@ -95,21 +99,29 @@ def evaluate_metadata(
 ) -> CooldownStatus:
     current = now if now is not None else datetime.now().astimezone()
     status = metadata.get("status", {}) if isinstance(metadata.get("status"), dict) else {}
-    model_statuses = tuple(evaluate_model(model, now=current) for model in _models_from_status(status))
+    model_statuses = tuple(
+        evaluate_model(model, now=current) for model in _models_from_status(status)
+    )
     available_models = sum(1 for model in model_statuses if model.is_available)
     total_models = len(model_statuses)
     decision_model_status = find_decision_model(model_statuses, decision_model)
-    refresh_times = [
-        model.refresh_at
-        for model in model_statuses
-        if model.refresh_at is not None
-    ]
-    next_available_at = min(refresh_times) if refresh_times else parse_dt(metadata.get("next_available_at", ""))
-    remaining_seconds = int((next_available_at - current).total_seconds()) if next_available_at else 0
+    refresh_times = [model.refresh_at for model in model_statuses if model.refresh_at is not None]
+    next_available_at = (
+        min(refresh_times) if refresh_times else parse_dt(str(metadata.get("next_available_at", "")))
+    )
+    remaining_seconds = (
+        int((next_available_at - current).total_seconds()) if next_available_at else 0
+    )
     if decision_model_status is not None:
-        account_status = "ready" if decision_model_status.is_available or decision_model_status.remaining_seconds <= 0 else "cooldown"
+        account_status = (
+            "ready"
+            if decision_model_status.is_available or decision_model_status.remaining_seconds <= 0
+            else "cooldown"
+        )
         remaining_seconds = decision_model_status.remaining_seconds
-        next_available_at = current if account_status == "ready" else decision_model_status.refresh_at
+        next_available_at = (
+            current if account_status == "ready" else decision_model_status.refresh_at
+        )
     else:
         account_status = "ready" if available_models > 0 or remaining_seconds <= 0 else "cooldown"
     if account_status == "ready":
@@ -138,7 +150,9 @@ def evaluate_entries(
 ) -> list[CooldownStatus]:
     latest: dict[str, CooldownStatus] = {}
     for entry in entries:
-        status = evaluate_metadata(entry.metadata, source="backup", now=now, decision_model=decision_model)
+        status = evaluate_metadata(
+            entry.metadata, source="backup", now=now, decision_model=decision_model
+        )
         existing = latest.get(status.email)
         if existing is None or (
             status.next_available_at is not None
@@ -148,7 +162,9 @@ def evaluate_entries(
             latest[status.email] = status
 
     for email, record in load_registry().items():
-        status = evaluate_metadata(record, source="registry", now=now, decision_model=decision_model)
+        status = evaluate_metadata(
+            record, source="registry", now=now, decision_model=decision_model
+        )
         latest[email] = status
 
     return sorted(
@@ -227,4 +243,11 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
             usage,
             next_available,
         )
-    console.print(Panel(table, title="[bold bright_cyan]Antigravity Cooldown[/]", border_style="bright_cyan", expand=False))
+    console.print(
+        Panel(
+            table,
+            title="[bold bright_cyan]Antigravity Cooldown[/]",
+            border_style="bright_cyan",
+            expand=False,
+        )
+    )

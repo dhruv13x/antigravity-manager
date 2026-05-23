@@ -9,8 +9,6 @@ from typing import Any
 
 from .config import (
     ANTIGRAVITY_AUTH_FILES,
-    ANTIGRAVITY_HOME,
-    DEFAULT_BACKUP_DIR,
     DEFAULT_DECISION_MODEL,
     EXCLUDED_TOP_LEVEL_NAMES,
     GEMINI_HOME,
@@ -23,7 +21,7 @@ from .utils import build_archive_name, isoformat_local
 ESTIMATED_MODEL_RESET_HOURS = 5
 
 
-def find_decision_model(status: LiveStatus, model_pattern: str = DEFAULT_DECISION_MODEL):
+def find_decision_model(status: LiveStatus, model_pattern: str = DEFAULT_DECISION_MODEL) -> Any | None:
     pattern = model_pattern.lower()
     matches = [model for model in status.models if pattern in model.model_name.lower()]
     if not matches:
@@ -32,7 +30,9 @@ def find_decision_model(status: LiveStatus, model_pattern: str = DEFAULT_DECISIO
     return high[0] if high else matches[0]
 
 
-def resolve_backup_anchor(status: LiveStatus, model_pattern: str = DEFAULT_DECISION_MODEL) -> tuple[datetime, str, str | None]:
+def resolve_backup_anchor(
+    status: LiveStatus, model_pattern: str = DEFAULT_DECISION_MODEL
+) -> tuple[datetime, str, str | None]:
     model = find_decision_model(status, model_pattern)
     if model and model.refresh_at is not None:
         return model.refresh_at, "decision_model_refresh_at", model.model_name
@@ -118,7 +118,9 @@ def build_backup_metadata(
     backup_anchor_model: str | None,
 ) -> dict[str, Any]:
     next_refreshes = [model.refresh_at for model in status.models if model.refresh_at is not None]
-    next_available_at = max(next_refreshes).isoformat() if next_refreshes else status.captured_at.isoformat()
+    next_available_at = (
+        max(next_refreshes).isoformat() if next_refreshes else status.captured_at.isoformat()
+    )
     return {
         "schema_version": 1,
         "product": "antigravity",
@@ -142,9 +144,13 @@ def build_backup_metadata(
     }
 
 
-def iter_antigravity_entries(source_dir: Path, *, auth_only: bool, include_bin: bool, include_logs: bool) -> list[Path]:
+def iter_antigravity_entries(
+    source_dir: Path, *, auth_only: bool, include_bin: bool, include_logs: bool
+) -> list[Path]:
     if auth_only:
-        return [source_dir / name for name in ANTIGRAVITY_AUTH_FILES if (source_dir / name).exists()]
+        return [
+            source_dir / name for name in ANTIGRAVITY_AUTH_FILES if (source_dir / name).exists()
+        ]
 
     entries = []
     for path in sorted(source_dir.iterdir(), key=lambda item: item.name):
@@ -176,7 +182,9 @@ def create_backup_archive(
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="agm-backup-") as temp_dir_str:
         temp_metadata_path = Path(temp_dir_str) / metadata_path.name
-        temp_metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+        temp_metadata_path.write_text(
+            json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8"
+        )
 
         with tarfile.open(archive_path, "w:gz") as tar:
             for path in iter_antigravity_entries(
@@ -200,7 +208,9 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
     status = get_status_for_backup(args)
     backup_dir = Path(args.backup_dir).expanduser()
     decision_model = getattr(args, "decision_model", DEFAULT_DECISION_MODEL)
-    backup_anchor_at, backup_anchor_source, backup_anchor_model = resolve_backup_anchor(status, decision_model)
+    backup_anchor_at, backup_anchor_source, backup_anchor_model = resolve_backup_anchor(
+        status, decision_model
+    )
     archive_path = backup_dir / build_archive_name(backup_anchor_at, status.email)
     metadata_path = archive_path.with_name(archive_path.name.replace(".tar.gz", ".metadata.json"))
     metadata = build_backup_metadata(
@@ -247,7 +257,9 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
     return archive_path, metadata_path, metadata
 
 
-def backup_result_to_text(archive_path: Path, metadata_path: Path, metadata: dict[str, Any], *, dry_run: bool) -> str:
+def backup_result_to_text(
+    archive_path: Path, metadata_path: Path, metadata: dict[str, Any], *, dry_run: bool
+) -> str:
     return "\n".join(
         [
             f"mode: {'dry-run' if dry_run else 'created'}",
