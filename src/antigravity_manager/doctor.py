@@ -4,7 +4,9 @@ import shutil
 from pathlib import Path
 
 
-def run_doctor(*, antigravity_home: Path, gemini_home: Path, backup_dir: Path) -> list[tuple[str, bool, str]]:
+def run_doctor(
+    *, antigravity_home: Path, gemini_home: Path, backup_dir: Path
+) -> list[tuple[str, bool, str]]:
     checks = [
         ("tmux", shutil.which("tmux") is not None, shutil.which("tmux") or "missing"),
         ("agy", shutil.which("agy") is not None, shutil.which("agy") or "missing"),
@@ -29,4 +31,11 @@ def print_doctor_table(checks: list[tuple[str, bool, str]]) -> None:
             "[bold bright_green]OK[/]" if ok else "[bold red]MISSING[/]",
             detail,
         )
-    console.print(Panel(table, title="[bold bright_cyan]Antigravity Manager Doctor[/]", border_style="bright_cyan", expand=False))
+    console.print(
+        Panel(
+            table,
+            title="[bold bright_cyan]Antigravity Manager Doctor[/]",
+            border_style="bright_cyan",
+            expand=False,
+        )
+    )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from typing import Any
 import json
 import tarfile
 from datetime import datetime
@@ -11,11 +12,11 @@ from antigravity_manager.restore import perform_restore
 from antigravity_manager.status import LiveStatus, ModelQuotaStatus
 
 
-def make_args(**kwargs):
+def make_args(**kwargs: Any) -> argparse.Namespace:
     return argparse.Namespace(**kwargs)
 
 
-def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch) -> None:
+def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any) -> None:
     source = tmp_path / "antigravity-cli"
     gemini = tmp_path / "gemini"
     backup_dir = tmp_path / "backups"
@@ -91,7 +92,10 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch) -> 
     )
 
     assert (dest / "antigravity-oauth-token").read_text(encoding="utf-8") == "new-token"
-    assert json.loads((dest_gemini / "google_accounts.json").read_text(encoding="utf-8"))["active"] == "person@example.com"
+    assert (
+        json.loads((dest_gemini / "google_accounts.json").read_text(encoding="utf-8"))["active"]
+        == "person@example.com"
+    )
     assert any(
         path.name.endswith("-person@example.com-pre-restore-antigravity")
         for path in safety_dir.glob("*person@example.com-pre-restore-antigravity")
@@ -130,3 +134,49 @@ def test_backup_anchor_prefers_gemini_flash_reset() -> None:
     assert anchor_at == flash_reset
     assert source == "decision_model_refresh_at"
     assert model_name == "Gemini 3.5 Flash (High)"
+
+
+def test_backup_no_decision_model_found(tmp_path: Path, monkeypatch: Any) -> None:
+    source = tmp_path / "antigravity-cli"
+    gemini = tmp_path / "gemini"
+    backup_dir = tmp_path / "backups"
+    source.mkdir()
+    gemini.mkdir()
+    (source / "settings.json").write_text("{}", encoding="utf-8")
+    (gemini / "google_accounts.json").write_text(json.dumps({"active": "person@example.com"}))
+
+    monkeypatch.setattr(
+        "antigravity_manager.backup.update_registry_from_status", lambda status: None
+    )
+
+    # Mock capture_tmux_status_text to return a valid status text
+    status_text = (
+        "Account Status\ntest@example.com (Free)\nModels (1)\nOther Model\nRefreshes in 1h"
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.backup.capture_tmux_status_text", lambda **k: status_text
+    )
+
+    archive_path, metadata_path, metadata = perform_backup(
+        make_args(
+            source_dir=str(source),
+            gemini_home=str(gemini),
+            backup_dir=str(backup_dir),
+            status_file=None,
+            without_status_check=False,
+            auth_only=True,
+            include_bin=False,
+            include_logs=False,
+            decision_model="Gemini",
+            dry_run=False,
+            force=False,
+            tmux_session_name=None,
+            agy_command="agy",
+            tmux_cols=140,
+            tmux_rows=45,
+            startup_timeout_seconds=30.0,
+            usage_timeout_seconds=30.0,
+        )
+    )
+    assert archive_path.exists()
+    assert metadata["backup_anchor_model"] is None
