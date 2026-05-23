@@ -18,6 +18,8 @@ from .config import (
 from .cooldown import evaluate_entries, format_remaining, print_statuses_table
 from .doctor import print_doctor_table, run_doctor
 from .list_backups import list_backups, print_entries_table
+from .prune import perform_prune, prune_result_to_text
+from .prune_backups import perform_prune_backups
 from .registry import update_registry_from_status
 from .restore import perform_restore, restore_result_to_text
 from .status import capture_tmux_status_text, live_status_to_text, parse_live_status_text, status_to_dict
@@ -93,6 +95,16 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--gemini-home", default=str(GEMINI_HOME), help="Gemini home containing shared identity files.")
     doctor_parser.add_argument("--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory.")
     doctor_parser.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    prune_parser = subparsers.add_parser("prune", help="Prune temporary runtime state.")
+    prune_parser.add_argument("--source-dir", default=str(ANTIGRAVITY_HOME), help="Antigravity CLI directory.")
+    prune_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed without deleting.")
+
+    prune_backups_parser = subparsers.add_parser("prune-backups", help="Delete old backup archives and metadata.")
+    prune_backups_parser.add_argument("--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory.")
+    prune_backups_parser.add_argument("--keep", type=int, help="Number of backups to keep per email.")
+    prune_backups_parser.add_argument("--keep-latest-per-email", action="store_true", help="Keep only the latest backup per email.")
+    prune_backups_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed without deleting.")
 
     return parser
 
@@ -237,6 +249,20 @@ def handle_doctor(args: argparse.Namespace) -> None:
         print_doctor_table(checks)
 
 
+def handle_prune(args: argparse.Namespace) -> None:
+    plan = perform_prune(args)
+    console.print(prune_result_to_text(plan, dry_run=args.dry_run, source_dir=Path(args.source_dir)))
+
+
+def handle_prune_backups(args: argparse.Namespace) -> None:
+    perform_prune_backups(
+        backup_dir=Path(args.backup_dir).expanduser(),
+        keep=args.keep,
+        keep_latest_per_email=args.keep_latest_per_email,
+        dry_run=args.dry_run,
+    )
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -272,6 +298,8 @@ def main() -> None:
         "recommend": handle_recommend,
         "use": handle_use,
         "doctor": handle_doctor,
+        "prune": handle_prune,
+        "prune-backups": handle_prune_backups,
     }
     try:
         handlers[args.command](args)
