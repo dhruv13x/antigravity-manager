@@ -19,7 +19,7 @@ def export_profile(export_path: Path, dry_run: bool = False) -> None:
 
     export_path.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(export_path, "w:gz") as tar:
-        tar.add(AGM_HOME, arcname=AGM_HOME.name)
+        tar.add(AGM_HOME, arcname=".")
 
 
 def import_profile(import_path: Path, dry_run: bool = False) -> None:
