@@ -12,7 +12,8 @@ from typing import Any
 from .ui import console
 
 EMAIL_AND_PLAN_RE = re.compile(
-    r"(?P<email>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\s*\((?P<plan>[^)]+)\)"
+    r"(?P<email>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:\s*\((?P<plan>[^)]+)\))?",
+    re.IGNORECASE,
 )
 QUOTA_PERCENT_RE = re.compile(r"(\d+)%")
 REFRESH_RE = re.compile(
@@ -22,6 +23,7 @@ REFRESH_RE = re.compile(
 PROMPT_RE = re.compile(r"[›>]")
 USAGE_HEADER_RE = re.compile(r"Model Quota", re.IGNORECASE)
 MODEL_NAME_RE = re.compile(r"^(?![│└>])(?=.*\()(?=.*\))(?=.*[A-Za-z]).+$")
+TRUST_PROMPT_RE = re.compile(r"Do you trust the contents of this project\?", re.IGNORECASE)
 
 
 class AntigravityStatusError(RuntimeError):
@@ -81,6 +83,13 @@ def wait_for_prompt(pane_id: str, *, timeout_seconds: float) -> str:
     with console.status("[cyan]Waiting for Antigravity startup...[/cyan]", spinner="dots"):
         while True:
             output = capture_pane(pane_id)
+
+            # Handle directory trust prompt if it appears
+            if TRUST_PROMPT_RE.search(output):
+                run_command(["tmux", "send-keys", "-t", pane_id, "Enter"], check=False)
+                time.sleep(1)  # Give it a moment to process trust
+                continue
+
             has_prompt = PROMPT_RE.search(output) is not None
             has_account = EMAIL_AND_PLAN_RE.search(output) is not None
             stable_reads = stable_reads + 1 if has_prompt and has_account else 0
@@ -163,7 +172,9 @@ def parse_email_and_plan(text: str) -> tuple[str, str]:
     match = EMAIL_AND_PLAN_RE.search(text)
     if not match:
         raise ValueError("Unable to parse email and plan.")
-    return match.group("email").strip(), match.group("plan").strip()
+    email = match.group("email").strip()
+    plan = match.group("plan").strip() if match.group("plan") else "Standard"
+    return email, plan
 
 
 def parse_refresh_at(refresh_text: str | None, *, now: datetime) -> datetime | None:

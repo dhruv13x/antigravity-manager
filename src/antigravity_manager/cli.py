@@ -33,7 +33,7 @@ from .status import (
     status_to_dict,
 )
 from .sync import pull_backup, push_backup, verify_cloud_connectivity
-from .ui import banner, console, print_rich_help
+from .ui import banner, console, error_console, print_rich_help
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -581,7 +581,7 @@ def main() -> None:
     try:
         handlers[args.command](args)
     except (FileNotFoundError, FileExistsError, ValueError, RuntimeError) as exc:
-        console.print(f"[bold red]Error:[/bold red] {exc}", stderr=True)
+        error_console.print(f"[bold red]Error:[/bold red] {exc}")
         sys.exit(1)
 
 

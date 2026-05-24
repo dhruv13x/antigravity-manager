@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 src/antigravity_manager/__init__.py
 src/antigravity_manager/backup.py
+src/antigravity_manager/banner.py
 src/antigravity_manager/cli.py
 src/antigravity_manager/config.py
 src/antigravity_manager/cooldown.py
@@ -30,6 +31,7 @@ tests/test_cli.py
 tests/test_cli_commands.py
 tests/test_cooldown.py
 tests/test_cooldown2.py
+tests/test_credentials.py
 tests/test_doctor.py
 tests/test_doctor_2.py
 tests/test_list_backups.py

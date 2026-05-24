@@ -9,6 +9,8 @@ FILE_GLOBS = [
     "logs.json",
     "history.jsonl",
     "models_cache.json",
+    "cli.log",
+    "last_check.timestamp",
 ]
 
 DIRECTORY_NAMES = [
@@ -18,6 +20,9 @@ DIRECTORY_NAMES = [
     "cache",
     "log",
     "sessions",
+    "brain",
+    "conversations",
+    "implicit",
 ]
 
 
@@ -68,6 +73,15 @@ def perform_prune(args: Any) -> PrunePlan:
                         else:
                             item.unlink()
                     continue
+            elif path.name == "cache":
+                for item in path.iterdir():
+                    if item.name == "onboarding.json":
+                        continue
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink()
+                continue
             shutil.rmtree(path)
 
     return plan
