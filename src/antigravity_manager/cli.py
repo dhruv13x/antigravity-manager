@@ -29,6 +29,10 @@ from .status import (
     status_to_dict,
 )
 from .ui import console
+from .purge import perform_purge
+from .remove import perform_remove
+from .profile import perform_profile
+from .sync import perform_sync
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -217,6 +221,18 @@ def build_parser() -> argparse.ArgumentParser:
     prune_backups_parser.add_argument("--keep-latest-per-email", action="store_true", help="Keep only the latest backup per email.")
     prune_backups_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed without deleting.")
 
+    purge_parser = subparsers.add_parser("purge", help="Purge caches.")
+    purge_parser.set_defaults(command="purge")
+
+    remove_parser = subparsers.add_parser("remove", help="Remove data.")
+    remove_parser.set_defaults(command="remove")
+
+    profile_parser = subparsers.add_parser("profile", help="Manage profiles.")
+    profile_parser.set_defaults(command="profile")
+
+    sync_parser = subparsers.add_parser("sync", help="Sync backups.")
+    sync_parser.set_defaults(command="sync")
+
     return parser
 
 
@@ -380,6 +396,18 @@ def handle_prune_backups(args: argparse.Namespace) -> None:
         dry_run=args.dry_run,
     )
 
+def handle_purge(args: argparse.Namespace) -> None:
+    perform_purge(args)
+
+def handle_remove(args: argparse.Namespace) -> None:
+    perform_remove(args)
+
+def handle_profile(args: argparse.Namespace) -> None:
+    perform_profile(args)
+
+def handle_sync(args: argparse.Namespace) -> None:
+    perform_sync(args)
+
 
 def main() -> None:
     parser = build_parser()
@@ -418,6 +446,10 @@ def main() -> None:
         "doctor": handle_doctor,
         "prune": handle_prune,
         "prune-backups": handle_prune_backups,
+        "purge": handle_purge,
+        "remove": handle_remove,
+        "profile": handle_profile,
+        "sync": handle_sync,
     }
     try:
         handlers[args.command](args)

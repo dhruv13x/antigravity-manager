@@ -22,5 +22,12 @@ src/antigravity_manager.egg-info/requires.txt
 src/antigravity_manager.egg-info/top_level.txt
 tests/test_backup_restore.py
 tests/test_cli.py
+tests/test_config.py
 tests/test_cooldown.py
+tests/test_doctor.py
+tests/test_list_backups.py
+tests/test_prune.py
+tests/test_prune_backups.py
+tests/test_registry.py
 tests/test_status.py
+tests/test_utils.py
