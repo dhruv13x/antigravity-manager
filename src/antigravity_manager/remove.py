@@ -24,7 +24,7 @@ def perform_remove(args: Any) -> dict[str, Any]:
     local_files = []
     if backup_dir.exists():
         for p in backup_dir.glob("*"):
-            if email in p.name and (
+            if f"-{email}-" in p.name and (
                 p.name.endswith(".tar.gz") or p.name.endswith(".metadata.json")
             ):
                 local_files.append(p)
