@@ -7,6 +7,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from .ui import console
 
@@ -45,7 +46,6 @@ class LiveStatus:
     models: tuple[ModelQuotaStatus, ...]
 
 
-from typing import Any
 def status_to_dict(status: LiveStatus) -> dict[str, Any]:
     data = asdict(status)
     data["captured_at"] = status.captured_at.isoformat()
