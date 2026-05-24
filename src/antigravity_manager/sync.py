@@ -11,7 +11,7 @@ from .ui import console
 
 def _get_s3_client(
     endpoint_url: str | None, access_key: str | None, secret_key: str | None
-) -> boto3.client:
+) -> Any:
     # use env vars if not passed
     endpoint_url = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
     access_key = access_key or os.environ.get("AWS_ACCESS_KEY_ID")
