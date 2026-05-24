@@ -24,7 +24,8 @@ def test_cli_profile(monkeypatch, tmp_path, capsys):
 
 def test_cli_sync(monkeypatch, tmp_path, capsys):
     import sys
-    monkeypatch.setattr(sys, "argv", ["agm", "sync", "push", "--bucket-name", "b", "--dry-run"])
+    # Add dummy credentials to pass resolve_credentials
+    monkeypatch.setattr(sys, "argv", ["agm", "sync", "push", "--bucket-name", "b", "--access-key", "a", "--secret-key", "s", "--dry-run"])
 
     # We mock push_backup directly
     import antigravity_manager.cli
@@ -56,7 +57,8 @@ def test_cli_profile_import(monkeypatch, tmp_path, capsys):
 
 def test_cli_sync_pull(monkeypatch, tmp_path, capsys):
     import sys
-    monkeypatch.setattr(sys, "argv", ["agm", "sync", "pull", "--bucket-name", "b", "--dry-run"])
+    # Add dummy credentials to pass resolve_credentials
+    monkeypatch.setattr(sys, "argv", ["agm", "sync", "pull", "--bucket-name", "b", "--access-key", "a", "--secret-key", "s", "--dry-run"])
     import antigravity_manager.cli
     monkeypatch.setattr(antigravity_manager.cli, "pull_backup", lambda *a, **kw: print("pulled!"))
     main()

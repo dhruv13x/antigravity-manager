@@ -252,15 +252,15 @@ def restore_result_to_text(
     full: bool,
 ) -> str:
     lines = [
-        f"mode: {'dry-run' if dry_run else 'restored'}",
-        f"restore_type: {'full' if full else 'auth-only'}",
-        f"archive: {archive_path}",
-        f"email: {metadata.get('email', 'unknown')}",
-        f"plan: {metadata.get('plan', 'unknown')}",
+        f"[info]mode[/info]: {'[warning]dry-run[/warning]' if dry_run else '[success]restored[/success]'}",
+        f"[info]restore_type[/info]: {'full' if full else 'auth-only'}",
+        f"[info]archive[/info]: {archive_path}",
+        f"[info]email[/info]: {metadata.get('email', 'unknown')}",
+        f"[info]plan[/info]: {metadata.get('plan', 'unknown')}",
     ]
     if safety_path:
-        lines.append(f"safety_backup: {safety_path}")
+        lines.append(f"[info]safety_backup[/info]: {safety_path}")
     if restored_files:
-        lines.append("restored_files:")
+        lines.append("[info]restored_files[/info]:")
         lines.extend(f"  - {path}" for path in restored_files)
     return "\n".join(lines)

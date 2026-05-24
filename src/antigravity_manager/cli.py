@@ -33,7 +33,7 @@ from .status import (
     status_to_dict,
 )
 from .sync import pull_backup, push_backup, verify_cloud_connectivity
-from .ui import banner, console, error_console, print_rich_help
+from .ui import banner, console, error_console, print_rich_help, print_panel, print_success, print_info
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -289,6 +289,8 @@ def build_parser() -> argparse.ArgumentParser:
     check_cloud_parser.add_argument("--access-key", help="S3 access key.")
     check_cloud_parser.add_argument("--secret-key", help="S3 secret key.")
 
+    subparsers.add_parser("menu", help="Launch interactive terminal menu.")
+
     return parser
 
 
@@ -327,23 +329,21 @@ def handle_status(args: argparse.Namespace) -> None:
 
 def handle_backup(args: argparse.Namespace) -> None:
     archive_path, metadata_path, metadata = perform_backup(args)
-    console.print(
-        backup_result_to_text(archive_path, metadata_path, metadata, dry_run=args.dry_run)
-    )
+    text = backup_result_to_text(archive_path, metadata_path, metadata, dry_run=args.dry_run)
+    print_panel(text, title="Backup Result", style="success" if not args.dry_run else "warning")
 
 
 def handle_restore(args: argparse.Namespace) -> None:
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
-    console.print(
-        restore_result_to_text(
-            archive_path,
-            metadata,
-            restored_files,
-            safety_path,
-            dry_run=args.dry_run,
-            full=args.full,
-        )
+    text = restore_result_to_text(
+        archive_path,
+        metadata,
+        restored_files,
+        safety_path,
+        dry_run=args.dry_run,
+        full=args.full,
     )
+    print_panel(text, title="Restore Result", style="success" if not args.dry_run else "warning")
 
 
 def handle_cooldown(args: argparse.Namespace) -> None:
@@ -409,16 +409,15 @@ def handle_use(args: argparse.Namespace) -> None:
     args.force = False
     args.from_archive = None
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
-    console.print(
-        restore_result_to_text(
-            archive_path,
-            metadata,
-            restored_files,
-            safety_path,
-            dry_run=args.dry_run,
-            full=False,
-        )
+    text = restore_result_to_text(
+        archive_path,
+        metadata,
+        restored_files,
+        safety_path,
+        dry_run=args.dry_run,
+        full=False,
     )
+    print_panel(text, title="Use Result", style="success" if not args.dry_run else "warning")
 
 
 def handle_doctor(args: argparse.Namespace) -> None:
@@ -442,9 +441,8 @@ def handle_doctor(args: argparse.Namespace) -> None:
 
 def handle_prune(args: argparse.Namespace) -> None:
     plan = perform_prune(args)
-    console.print(
-        prune_result_to_text(plan, dry_run=args.dry_run, source_dir=Path(args.source_dir))
-    )
+    text = prune_result_to_text(plan, dry_run=args.dry_run, source_dir=Path(args.source_dir))
+    print_panel(text, title="Prune Result", style="success" if not args.dry_run else "warning")
 
 
 def handle_prune_backups(args: argparse.Namespace) -> None:
@@ -459,12 +457,14 @@ def handle_prune_backups(args: argparse.Namespace) -> None:
 def handle_purge(args: argparse.Namespace) -> None:
     source_dir = Path(args.source_dir).expanduser()
     success = perform_purge(args)
-    console.print(purge_result_to_text(success, source_dir=source_dir, dry_run=args.dry_run))
+    text = purge_result_to_text(success, source_dir=source_dir, dry_run=args.dry_run)
+    print_panel(text, title="Purge Result", style="success" if not args.dry_run else "warning")
 
 
 def handle_remove(args: argparse.Namespace) -> None:
     results = perform_remove(args)
-    console.print(remove_result_to_text(results, email=args.email, dry_run=args.dry_run))
+    text = remove_result_to_text(results, email=args.email, dry_run=args.dry_run)
+    print_panel(text, title="Remove Result", style="success" if not args.dry_run else "warning")
 
 
 def handle_profile(args: argparse.Namespace) -> None:
@@ -513,6 +513,11 @@ def handle_check_cloud(args: argparse.Namespace) -> None:
         console.print(f"[bold green]Successfully verified cloud access to {bucket_name}[/]")
     else:
         sys.exit(1)
+
+
+def handle_menu(args: argparse.Namespace) -> None:
+    from .menu import run_menu
+    run_menu()
 
 
 def main() -> None:
@@ -577,6 +582,7 @@ def main() -> None:
         "profile": handle_profile,
         "sync": handle_sync,
         "check-cloud": handle_check_cloud,
+        "menu": handle_menu,
     }
     try:
         handlers[args.command](args)

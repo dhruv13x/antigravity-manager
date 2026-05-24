@@ -7,7 +7,7 @@ from typing import Any
 from b2sdk.v2 import B2Api, InMemoryAccountInfo
 from rich.console import Console
 
-from .ui import console
+from .ui import console, print_info, print_success, print_warning, get_progress
 
 console_stderr = Console(stderr=True)
 
@@ -59,17 +59,22 @@ def push_backup(
 
         # Check if file exists and has the same size
         if object_name in remote_files and remote_files[object_name] == file_path.stat().st_size:
-            console.print(f"Skipping {file_path.name}, already exists in cloud with same size.")
+            print_info(f"Skipping {file_path.name}, already exists in cloud with same size.")
             continue
 
         if dry_run:
-            console.print(f"Would push {file_path.name} to b2://{bucket_name}/{object_name}")
+            print_info(f"Would push {file_path.name} to b2://{bucket_name}/{object_name}")
             continue
 
         try:
-            console.print(f"Uploading {file_path.name} to b2://{bucket_name}/{object_name}...")
-            bucket.upload_local_file(local_file=str(file_path), file_name=object_name)
-            console.print(f"[green]Successfully uploaded {file_path.name}[/]")
+            with get_progress() as progress:
+                task = progress.add_task(f"Uploading {file_path.name}...", total=file_path.stat().st_size)
+                # B2 SDK doesn't natively expose rich progress hooks easily in this sync method without subclassing,
+                # but we can show an indeterminate spinner while it uploads.
+                progress.update(task, total=None)
+                bucket.upload_local_file(local_file=str(file_path), file_name=object_name)
+                progress.update(task, completed=100)
+            print_success(f"Successfully uploaded {file_path.name}")
         except Exception as e:
             console_stderr.print(f"[bold red]Failed to upload {file_path.name}: {e}[/]")
 
@@ -100,7 +105,7 @@ def pull_backup(
     try:
         remote_versions = list(bucket.ls(recursive=True))
         if not remote_versions:
-            console.print(f"No objects found in bucket {bucket_name}")
+            print_info(f"No objects found in bucket {bucket_name}")
             return
 
         for file_version, _ in remote_versions:
@@ -108,18 +113,20 @@ def pull_backup(
             file_path = backup_dir / object_name
 
             if object_name in local_files:
-                console.print(f"Skipping {object_name}, already exists locally.")
+                print_info(f"Skipping {object_name}, already exists locally.")
                 continue
 
             if dry_run:
-                console.print(f"Would pull b2://{bucket_name}/{object_name} to {file_path}")
+                print_info(f"Would pull b2://{bucket_name}/{object_name} to {file_path}")
                 continue
 
             try:
-                console.print(f"Downloading b2://{bucket_name}/{object_name} to {file_path}...")
-                download_dest = bucket.download_file_by_name(object_name)
-                download_dest.save_to(str(file_path))
-                console.print(f"[green]Successfully downloaded {object_name}[/]")
+                with get_progress() as progress:
+                    task = progress.add_task(f"Downloading {object_name}...", total=None)
+                    download_dest = bucket.download_file_by_name(object_name)
+                    download_dest.save_to(str(file_path))
+                    progress.update(task, completed=100)
+                print_success(f"Successfully downloaded {object_name}")
             except Exception as e:
                 console_stderr.print(f"[bold red]Failed to download {object_name}: {e}[/]")
     except Exception as e:

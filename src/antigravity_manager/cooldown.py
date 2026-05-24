@@ -223,19 +223,25 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
     from .ui import Panel, Table, console
 
     active_email = read_active_email()
-    table = Table(show_header=True, header_style="bold bright_magenta")
-    table.add_column("Account", style="bright_cyan")
+    table = Table(
+        show_header=True,
+        header_style="bold magenta",
+        border_style="blue",
+        expand=False,
+        padding=(0, 2),
+    )
+    table.add_column("Account", style="cyan")
     table.add_column("Status", justify="center")
     table.add_column("Usage")
     table.add_column("Next Reset", justify="right", style="dim")
 
     for status in statuses:
         if status.email == active_email:
-            status_text = "[bold bright_green]ACTIVE[/]"
+            status_text = "[success]ACTIVE[/success]"
         elif status.status == "ready":
-            status_text = "[bold bright_green]READY[/]"
+            status_text = "[success]READY[/success]"
         else:
-            status_text = "[bold bright_yellow]COOLDOWN[/]"
+            status_text = "[warning]COOLDOWN[/warning]"
 
         usage = "\n".join(format_model_usage(model) for model in status.models) or "unknown"
         next_available = format_remaining(status.remaining_seconds)
@@ -248,8 +254,8 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
     console.print(
         Panel(
             table,
-            title="[bold bright_cyan]Antigravity Cooldown[/]",
-            border_style="bright_cyan",
+            title="Antigravity Cooldown",
+            border_style="blue",
             expand=False,
         )
     )

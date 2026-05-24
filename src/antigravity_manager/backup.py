@@ -17,6 +17,7 @@ from .config import (
 from .registry import update_registry_from_status
 from .status import LiveStatus, capture_tmux_status_text, parse_live_status_text, status_to_dict
 from .utils import build_archive_name, isoformat_local
+from .ui import console, print_info, print_success, get_progress
 
 ESTIMATED_MODEL_RESET_HOURS = 5
 
@@ -254,7 +255,6 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
         import getpass
         import subprocess
 
-        console.print(f"Encrypting archive: {archive_path} -> .gpg")
         passphrase = os.environ.get("AGM_BACKUP_PASSWORD")
         if not passphrase:
             passphrase = getpass.getpass("Enter passphrase for backup encryption: ")
@@ -299,15 +299,14 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
 def backup_result_to_text(
     archive_path: Path, metadata_path: Path, metadata: dict[str, Any], *, dry_run: bool
 ) -> str:
-    return "\n".join(
-        [
-            f"mode: {'dry-run' if dry_run else 'created'}",
-            f"archive: {archive_path}",
-            f"metadata: {metadata_path}",
-            f"email: {metadata.get('email', 'unknown')}",
-            f"plan: {metadata.get('plan', 'unknown')}",
-            f"next_available_at: {metadata.get('next_available_at', 'unknown')}",
-            f"backup_anchor: {metadata.get('backup_anchor_at', 'unknown')} ({metadata.get('backup_anchor_source', 'unknown')})",
-            f"backup_mode: {metadata.get('backup_mode', 'unknown')}",
-        ]
-    )
+    lines = [
+        f"[info]mode[/info]: {'[warning]dry-run[/warning]' if dry_run else '[success]created[/success]'}",
+        f"[info]archive[/info]: {archive_path}",
+        f"[info]metadata[/info]: {metadata_path}",
+        f"[info]email[/info]: {metadata.get('email', 'unknown')}",
+        f"[info]plan[/info]: {metadata.get('plan', 'unknown')}",
+        f"[info]next_available_at[/info]: {metadata.get('next_available_at', 'unknown')}",
+        f"[info]backup_anchor[/info]: {metadata.get('backup_anchor_at', 'unknown')} ({metadata.get('backup_anchor_source', 'unknown')})",
+        f"[info]backup_mode[/info]: {metadata.get('backup_mode', 'unknown')}",
+    ]
+    return "\n".join(lines)
