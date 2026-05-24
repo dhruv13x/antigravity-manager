@@ -21,7 +21,9 @@ from .utils import build_archive_name, isoformat_local
 ESTIMATED_MODEL_RESET_HOURS = 5
 
 
-def find_decision_model(status: LiveStatus, model_pattern: str = DEFAULT_DECISION_MODEL) -> Any | None:
+def find_decision_model(
+    status: LiveStatus, model_pattern: str = DEFAULT_DECISION_MODEL
+) -> Any | None:
     pattern = model_pattern.lower()
     matches = [model for model in status.models if pattern in model.model_name.lower()]
     if not matches:

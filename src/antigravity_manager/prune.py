@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 FILE_GLOBS = [
     "logs.json",
@@ -19,10 +20,12 @@ DIRECTORY_NAMES = [
     "sessions",
 ]
 
+
 @dataclass(frozen=True)
 class PrunePlan:
     files: list[Path]
     directories: list[Path]
+
 
 def build_prune_plan(source_dir: Path) -> PrunePlan:
     files: list[Path] = []
@@ -38,7 +41,8 @@ def build_prune_plan(source_dir: Path) -> PrunePlan:
 
     return PrunePlan(files=files, directories=directories)
 
-def perform_prune(args) -> PrunePlan:
+
+def perform_prune(args: Any) -> PrunePlan:
     source_dir = Path(args.source_dir).expanduser()
     if not source_dir.exists() or not source_dir.is_dir():
         raise FileNotFoundError(f"Antigravity CLI directory does not exist: {source_dir}")
@@ -67,6 +71,7 @@ def perform_prune(args) -> PrunePlan:
             shutil.rmtree(path)
 
     return plan
+
 
 def prune_result_to_text(plan: PrunePlan, *, dry_run: bool, source_dir: Path | None = None) -> str:
     lines = [

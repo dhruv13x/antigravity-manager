@@ -107,7 +107,9 @@ def evaluate_metadata(
     decision_model_status = find_decision_model(model_statuses, decision_model)
     refresh_times = [model.refresh_at for model in model_statuses if model.refresh_at is not None]
     next_available_at = (
-        min(refresh_times) if refresh_times else parse_dt(str(metadata.get("next_available_at", "")))
+        min(refresh_times)
+        if refresh_times
+        else parse_dt(str(metadata.get("next_available_at", "")))
     )
     remaining_seconds = (
         int((next_available_at - current).total_seconds()) if next_available_at else 0

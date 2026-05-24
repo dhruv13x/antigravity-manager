@@ -5,6 +5,7 @@ from pathlib import Path
 from .list_backups import build_backup_entry, iter_backup_archives
 from .ui import console
 
+
 def perform_prune_backups(
     backup_dir: Path,
     keep: int | None = None,
@@ -42,7 +43,7 @@ def perform_prune_backups(
             )
             return
 
-        email_counts = {}
+        email_counts: dict[str, int] = {}
         kept = []
         for e in entries:
             count = email_counts.get(e.email, 0)

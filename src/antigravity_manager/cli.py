@@ -18,9 +18,12 @@ from .config import (
 from .cooldown import evaluate_entries, format_remaining, print_statuses_table
 from .doctor import print_doctor_table, run_doctor
 from .list_backups import list_backups, print_entries_table
+from .profile import export_profile, import_profile
 from .prune import perform_prune, prune_result_to_text
 from .prune_backups import perform_prune_backups
+from .purge import perform_purge, purge_result_to_text
 from .registry import update_registry_from_status
+from .remove import perform_remove, remove_result_to_text
 from .restore import perform_restore, restore_result_to_text
 from .status import (
     capture_tmux_status_text,
@@ -28,6 +31,7 @@ from .status import (
     parse_live_status_text,
     status_to_dict,
 )
+from .sync import pull_backup, push_backup
 from .ui import console
 
 
@@ -208,14 +212,69 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
     prune_parser = subparsers.add_parser("prune", help="Prune temporary runtime state.")
-    prune_parser.add_argument("--source-dir", default=str(ANTIGRAVITY_HOME), help="Antigravity CLI directory.")
-    prune_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed without deleting.")
+    prune_parser.add_argument(
+        "--source-dir", default=str(ANTIGRAVITY_HOME), help="Antigravity CLI directory."
+    )
+    prune_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be removed without deleting."
+    )
 
-    prune_backups_parser = subparsers.add_parser("prune-backups", help="Delete old backup archives and metadata.")
-    prune_backups_parser.add_argument("--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory.")
-    prune_backups_parser.add_argument("--keep", type=int, help="Number of backups to keep per email.")
-    prune_backups_parser.add_argument("--keep-latest-per-email", action="store_true", help="Keep only the latest backup per email.")
-    prune_backups_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed without deleting.")
+    prune_backups_parser = subparsers.add_parser(
+        "prune-backups", help="Delete old backup archives and metadata."
+    )
+    prune_backups_parser.add_argument(
+        "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory."
+    )
+    prune_backups_parser.add_argument(
+        "--keep", type=int, help="Number of backups to keep per email."
+    )
+    prune_backups_parser.add_argument(
+        "--keep-latest-per-email",
+        action="store_true",
+        help="Keep only the latest backup per email.",
+    )
+    prune_backups_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be removed without deleting."
+    )
+
+    purge_parser = subparsers.add_parser("purge", help="Completely reset Antigravity state.")
+    purge_parser.add_argument(
+        "--source-dir", default=str(ANTIGRAVITY_HOME), help="Antigravity CLI directory."
+    )
+    purge_parser.add_argument("--yes", action="store_true", help="Confirm deletion.")
+    purge_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be removed without deleting."
+    )
+
+    remove_parser = subparsers.add_parser("remove", help="Remove all traces of a specific account.")
+    remove_parser.add_argument("email", help="Account email to remove.")
+    remove_parser.add_argument(
+        "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory."
+    )
+    remove_parser.add_argument("--yes", action="store_true", help="Confirm removal without prompt.")
+    remove_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be removed without deleting."
+    )
+
+    profile_parser = subparsers.add_parser("profile", help="Export or import manager profile.")
+    profile_parser.add_argument("action", choices=["export", "import"], help="Action to perform.")
+    profile_parser.add_argument("file", help="Profile archive path.")
+    profile_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would happen without doing it."
+    )
+
+    sync_parser = subparsers.add_parser("sync", help="Sync backups with S3 bucket.")
+    sync_parser.add_argument("direction", choices=["push", "pull"], help="Direction to sync.")
+    sync_parser.add_argument(
+        "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Local backup directory."
+    )
+    sync_parser.add_argument("--bucket-name", required=True, help="S3 bucket name.")
+    sync_parser.add_argument("--endpoint-url", help="S3 endpoint URL.")
+    sync_parser.add_argument("--access-key", help="S3 access key.")
+    sync_parser.add_argument("--secret-key", help="S3 secret key.")
+    sync_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would sync without doing it."
+    )
 
     return parser
 
@@ -318,7 +377,7 @@ def handle_recommend(args: argparse.Namespace) -> None:
                         "decision_model_available: "
                         f"{selected.decision_model_status.is_available if selected.decision_model_status else 'unknown'}"
                     ),
-                    ("available_in: " f"{format_remaining(selected.remaining_seconds)}"),
+                    (f"available_in: {format_remaining(selected.remaining_seconds)}"),
                     f"all_models: {selected.available_models}/{selected.total_models}",
                     f"source: {selected.source}",
                 ]
@@ -369,7 +428,9 @@ def handle_doctor(args: argparse.Namespace) -> None:
 
 def handle_prune(args: argparse.Namespace) -> None:
     plan = perform_prune(args)
-    console.print(prune_result_to_text(plan, dry_run=args.dry_run, source_dir=Path(args.source_dir)))
+    console.print(
+        prune_result_to_text(plan, dry_run=args.dry_run, source_dir=Path(args.source_dir))
+    )
 
 
 def handle_prune_backups(args: argparse.Namespace) -> None:
@@ -379,6 +440,51 @@ def handle_prune_backups(args: argparse.Namespace) -> None:
         keep_latest_per_email=args.keep_latest_per_email,
         dry_run=args.dry_run,
     )
+
+
+def handle_purge(args: argparse.Namespace) -> None:
+    source_dir = Path(args.source_dir).expanduser()
+    success = perform_purge(args)
+    console.print(purge_result_to_text(success, source_dir=source_dir, dry_run=args.dry_run))
+
+
+def handle_remove(args: argparse.Namespace) -> None:
+    results = perform_remove(args)
+    console.print(remove_result_to_text(results, email=args.email, dry_run=args.dry_run))
+
+
+def handle_profile(args: argparse.Namespace) -> None:
+    if args.action == "export":
+        export_profile(Path(args.file).expanduser(), dry_run=args.dry_run)
+        if not args.dry_run:
+            console.print(f"Profile exported to {args.file}")
+    elif args.action == "import":
+        import_profile(Path(args.file).expanduser(), dry_run=args.dry_run)
+        if not args.dry_run:
+            console.print(f"Profile imported from {args.file}")
+
+
+def handle_sync(args: argparse.Namespace) -> None:
+    backup_dir = Path(args.backup_dir).expanduser()
+
+    if args.direction == "push":
+        push_backup(
+            backup_dir=backup_dir,
+            bucket_name=args.bucket_name,
+            endpoint_url=args.endpoint_url,
+            access_key=args.access_key,
+            secret_key=args.secret_key,
+            dry_run=args.dry_run,
+        )
+    elif args.direction == "pull":
+        pull_backup(
+            backup_dir=backup_dir,
+            bucket_name=args.bucket_name,
+            endpoint_url=args.endpoint_url,
+            access_key=args.access_key,
+            secret_key=args.secret_key,
+            dry_run=args.dry_run,
+        )
 
 
 def main() -> None:
@@ -418,11 +524,15 @@ def main() -> None:
         "doctor": handle_doctor,
         "prune": handle_prune,
         "prune-backups": handle_prune_backups,
+        "purge": handle_purge,
+        "remove": handle_remove,
+        "profile": handle_profile,
+        "sync": handle_sync,
     }
     try:
         handlers[args.command](args)
     except (FileNotFoundError, FileExistsError, ValueError, RuntimeError) as exc:
-        console.print(f"[bold red]Error:[/bold red] {exc}", file=sys.stderr)
+        console.print(f"[bold red]Error:[/bold red] {exc}")
         sys.exit(1)
 
 
