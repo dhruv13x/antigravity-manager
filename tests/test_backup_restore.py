@@ -32,13 +32,21 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any
     (source / "antigravity-oauth-token").write_text("new-token", encoding="utf-8")
     (source / "settings.json").write_text("{}", encoding="utf-8")
     (source / "history.jsonl").write_text("not-auth", encoding="utf-8")
-    (gemini / "google_accounts.json").write_text(
+    (source / "google_accounts.json").write_text(
         json.dumps({"active": "person@example.com"}),
         encoding="utf-8",
     )
+    (gemini / "google_accounts.json").write_text(
+        json.dumps({"active": "root@example.com"}),
+        encoding="utf-8",
+    )
     (dest / "antigravity-oauth-token").write_text("old-token", encoding="utf-8")
-    (dest_gemini / "google_accounts.json").write_text(
+    (dest / "google_accounts.json").write_text(
         json.dumps({"active": "person@example.com"}),
+        encoding="utf-8",
+    )
+    (dest_gemini / "google_accounts.json").write_text(
+        json.dumps({"active": "dest-root@example.com"}),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -76,7 +84,7 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any
         names = set(tar.getnames())
     assert "antigravity-cli/antigravity-oauth-token" in names
     assert "antigravity-cli/history.jsonl" not in names
-    assert "gemini/google_accounts.json" in names
+    assert "gemini/google_accounts.json" not in names
 
     perform_restore(
         make_args(
@@ -94,12 +102,14 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any
     assert (dest / "antigravity-oauth-token").read_text(encoding="utf-8") == "new-token"
     assert (
         json.loads((dest_gemini / "google_accounts.json").read_text(encoding="utf-8"))["active"]
-        == "person@example.com"
+        == "dest-root@example.com"
     )
     assert any(
         path.name.endswith("-person@example.com-pre-restore-antigravity")
         for path in safety_dir.glob("*person@example.com-pre-restore-antigravity")
     )
+    safety_snapshot = next(safety_dir.glob("*person@example.com-pre-restore-antigravity"))
+    assert not (safety_snapshot / "gemini").exists()
 
 
 def test_backup_anchor_prefers_gemini_flash_reset() -> None:
@@ -194,6 +204,9 @@ def test_safe_extract_skips_absolute_symlink(tmp_path: Path) -> None:
         import io
 
         tar.addfile(file_info, io.BytesIO(file_data))
+        legacy_gemini_info = tarfile.TarInfo("gemini/google_accounts.json")
+        legacy_gemini_info.size = len(file_data)
+        tar.addfile(legacy_gemini_info, io.BytesIO(file_data))
 
         link_info = tarfile.TarInfo(
             "antigravity-cli/.antigravitycli/dbe4d293-62ea-4947-9dc6-0565c9e2f462.json"
@@ -205,6 +218,7 @@ def test_safe_extract_skips_absolute_symlink(tmp_path: Path) -> None:
     safe_extract(archive_path, dest_dir)
 
     assert (dest_dir / "antigravity-cli" / "settings.json").read_text() == "{}"
+    assert not (dest_dir / "gemini").exists()
     assert not (
         dest_dir
         / "antigravity-cli"

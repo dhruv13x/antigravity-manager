@@ -19,14 +19,6 @@ ANTIGRAVITY_HOME = _home_from_env(
     str(GEMINI_HOME / "antigravity-cli"),
 )
 
-GEMINI_IDENTITY_FILES = (
-    "google_accounts.json",
-    "oauth_creds.json",
-    "state.json",
-    "settings.json",
-    "installation_id",
-)
-
 ANTIGRAVITY_AUTH_FILES = (
     "antigravity-oauth-token",
     "installation_id",

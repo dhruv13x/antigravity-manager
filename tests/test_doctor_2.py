@@ -30,5 +30,5 @@ def test_run_doctor_pass(tmp_path, monkeypatch):
     z = tmp_path / "z"
     z.mkdir()
 
-    checks = run_doctor(antigravity_home=y, gemini_home=x, backup_dir=z)
+    checks = run_doctor(antigravity_home=y, backup_dir=z)
     assert all(ok for name, ok, desc in checks)

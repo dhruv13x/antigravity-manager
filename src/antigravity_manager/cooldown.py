@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-from .config import DEFAULT_DECISION_MODEL, GEMINI_HOME
+from .config import DEFAULT_DECISION_MODEL
 from .list_backups import BackupEntry, parse_dt
 from .registry import load_registry
 
@@ -53,13 +51,8 @@ def _models_from_status(status: dict[str, Any]) -> list[dict[str, Any]]:
     return models if isinstance(models, list) else []
 
 
-def read_active_email(gemini_home: Path = GEMINI_HOME) -> str | None:
-    try:
-        data = json.loads((gemini_home / "google_accounts.json").read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    active = data.get("active")
-    return active.strip() if isinstance(active, str) and active.strip() else None
+def read_active_email() -> str | None:
+    return None
 
 
 def evaluate_model(model: dict[str, Any], *, now: datetime) -> ModelCooldown:

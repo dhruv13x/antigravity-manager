@@ -11,7 +11,7 @@ from .sync import verify_cloud_connectivity
 
 
 def run_doctor(
-    *, antigravity_home: Path, gemini_home: Path, backup_dir: Path, args: Any = None
+    *, antigravity_home: Path, backup_dir: Path, args: Any = None
 ) -> list[tuple[str, bool, str]]:
     checks = []
 
@@ -24,7 +24,6 @@ def run_doctor(
     # Directories
     dirs = [
         ("antigravity_home", antigravity_home, str(antigravity_home)),
-        ("gemini_home", gemini_home, str(gemini_home)),
         ("backup_dir", backup_dir, str(backup_dir)),
     ]
     for name, path, _ in dirs:

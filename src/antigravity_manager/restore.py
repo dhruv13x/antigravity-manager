@@ -11,8 +11,6 @@ from typing import Any
 
 from .config import (
     ANTIGRAVITY_AUTH_FILES,
-    GEMINI_HOME,
-    GEMINI_IDENTITY_FILES,
     SAFETY_BACKUP_DIR,
 )
 from .list_backups import list_backups, load_metadata_for_archive
@@ -20,9 +18,9 @@ from .ui import RenderableType
 from .utils import safe_label
 
 
-def read_active_email(gemini_home: Path = GEMINI_HOME) -> str | None:
+def read_active_email(antigravity_home: Path) -> str | None:
     try:
-        data = json.loads((gemini_home / "google_accounts.json").read_text(encoding="utf-8"))
+        data = json.loads((antigravity_home / "google_accounts.json").read_text(encoding="utf-8"))
     except Exception:
         return None
     active = data.get("active")
@@ -75,6 +73,8 @@ def _link_stays_within_archive(member_name: str, link_name: str) -> bool:
 
 def safe_tar_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo | None:
     validate_member_name(member.name)
+    if member.name.startswith("gemini/"):
+        return None
     if member.islnk() or member.issym():
         if not _link_stays_within_archive(member.name, member.linkname):
             return None
@@ -147,19 +147,11 @@ def copy_member_file(src: Path, dest: Path, *, dry_run: bool) -> Path | None:
     return dest
 
 
-def restore_auth_only(
-    extracted_dir: Path, antigravity_home: Path, gemini_home: Path, *, dry_run: bool
-) -> list[Path]:
+def restore_auth_only(extracted_dir: Path, antigravity_home: Path, *, dry_run: bool) -> list[Path]:
     restored: list[Path] = []
     for name in ANTIGRAVITY_AUTH_FILES:
         dest = antigravity_home / name
         src = extracted_dir / "antigravity-cli" / name
-        copied = copy_member_file(src, dest, dry_run=dry_run)
-        if copied:
-            restored.append(copied)
-    for name in GEMINI_IDENTITY_FILES:
-        dest = gemini_home / name
-        src = extracted_dir / "gemini" / name
         copied = copy_member_file(src, dest, dry_run=dry_run)
         if copied:
             restored.append(copied)
@@ -169,15 +161,14 @@ def restore_auth_only(
 def snapshot_current_state(
     *,
     antigravity_home: Path,
-    gemini_home: Path,
     dry_run: bool,
 ) -> Path | None:
     if dry_run:
         return None
-    if not antigravity_home.exists() and not gemini_home.exists():
+    if not antigravity_home.exists():
         return None
 
-    email = read_active_email(gemini_home) or "unknown"
+    email = read_active_email(antigravity_home) or "unknown"
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     snapshot_dir = SAFETY_BACKUP_DIR / f"{timestamp}-{safe_label(email)}-pre-restore-antigravity"
     snapshot_dir.mkdir(parents=True, exist_ok=False)
@@ -190,21 +181,11 @@ def snapshot_current_state(
             ignore=shutil.ignore_patterns("log", "updater", "knowledge"),
         )
 
-    gemini_snapshot = snapshot_dir / "gemini"
-    gemini_snapshot.mkdir(exist_ok=True)
-    for name in GEMINI_IDENTITY_FILES:
-        src = gemini_home / name
-        if src.exists():
-            if src.is_dir() and not src.is_symlink():
-                shutil.copytree(src, gemini_snapshot / name, symlinks=True)
-            else:
-                shutil.copy2(src, gemini_snapshot / name)
-
     return snapshot_dir
 
 
 def restore_full(
-    extracted_dir: Path, antigravity_home: Path, gemini_home: Path, *, dry_run: bool, force: bool
+    extracted_dir: Path, antigravity_home: Path, *, dry_run: bool, force: bool
 ) -> Path | None:
     src = extracted_dir / "antigravity-cli"
     if not src.exists():
@@ -224,7 +205,7 @@ def restore_full(
         else:
             shutil.rmtree(antigravity_home)
     shutil.copytree(src, antigravity_home)
-    restore_auth_only(extracted_dir, antigravity_home, gemini_home, dry_run=False)
+    restore_auth_only(extracted_dir, antigravity_home, dry_run=False)
     return safety_path
 
 
@@ -232,21 +213,18 @@ def perform_restore(args: Any) -> tuple[Path, dict[str, Any], list[Path], Path |
     archive_path = resolve_archive_path(args)
     metadata = load_metadata_for_archive(archive_path)
     antigravity_home = Path(args.dest_dir).expanduser()
-    gemini_home = Path(args.gemini_home).expanduser()
 
     with tempfile.TemporaryDirectory(prefix="agm-restore-") as temp_dir_str:
         extracted_dir = Path(temp_dir_str)
         safe_extract(archive_path, extracted_dir)
         pre_restore_snapshot = snapshot_current_state(
             antigravity_home=antigravity_home,
-            gemini_home=gemini_home,
             dry_run=getattr(args, "dry_run", False),
         )
         if getattr(args, "full", False):
             safety_path = restore_full(
                 extracted_dir,
                 antigravity_home,
-                gemini_home,
                 dry_run=getattr(args, "dry_run", False),
                 force=getattr(args, "force", False),
             )
@@ -254,7 +232,6 @@ def perform_restore(args: Any) -> tuple[Path, dict[str, Any], list[Path], Path |
         restored = restore_auth_only(
             extracted_dir,
             antigravity_home,
-            gemini_home,
             dry_run=getattr(args, "dry_run", False),
         )
         return archive_path, metadata, restored, pre_restore_snapshot

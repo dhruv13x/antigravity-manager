@@ -11,8 +11,6 @@ from .config import (
     ANTIGRAVITY_AUTH_FILES,
     DEFAULT_DECISION_MODEL,
     EXCLUDED_TOP_LEVEL_NAMES,
-    GEMINI_HOME,
-    GEMINI_IDENTITY_FILES,
 )
 from .registry import update_registry_from_status
 from .status import LiveStatus, capture_tmux_status_text, parse_live_status_text, status_to_dict
@@ -57,8 +55,8 @@ def resolve_backup_anchor(
     )
 
 
-def read_active_email(gemini_home: Path = GEMINI_HOME) -> str | None:
-    path = gemini_home / "google_accounts.json"
+def read_active_email(antigravity_home: Path) -> str | None:
+    path = antigravity_home / "google_accounts.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -91,7 +89,7 @@ def fallback_status(email: str | None) -> LiveStatus:
 
 def get_status_for_backup(args: Any) -> LiveStatus:
     if getattr(args, "without_status_check", False):
-        return fallback_status(read_active_email(Path(args.gemini_home).expanduser()))
+        return fallback_status(read_active_email(Path(args.source_dir).expanduser()))
     if getattr(args, "status_file", None):
         text = Path(args.status_file).expanduser().read_text(encoding="utf-8")
     else:
@@ -111,7 +109,6 @@ def build_backup_metadata(
     archive_path: Path,
     *,
     source_antigravity_home: Path,
-    source_gemini_home: Path,
     backup_mode: str,
     include_bin: bool,
     include_logs: bool,
@@ -139,7 +136,6 @@ def build_backup_metadata(
         "archive_name": archive_path.name,
         "archive_path": str(archive_path),
         "source_antigravity_home": str(source_antigravity_home),
-        "source_gemini_home": str(source_gemini_home),
         "backup_mode": backup_mode,
         "include_bin": include_bin,
         "include_logs": include_logs,
@@ -167,17 +163,12 @@ def iter_antigravity_entries(
     return entries
 
 
-def iter_gemini_identity_entries(gemini_home: Path) -> list[Path]:
-    return [gemini_home / name for name in GEMINI_IDENTITY_FILES if (gemini_home / name).exists()]
-
-
 def create_backup_archive(
     *,
     archive_path: Path,
     metadata_path: Path,
     metadata: dict[str, Any],
     antigravity_home: Path,
-    gemini_home: Path,
     auth_only: bool,
     include_bin: bool,
     include_logs: bool,
@@ -197,14 +188,11 @@ def create_backup_archive(
                 include_logs=include_logs,
             ):
                 tar.add(path, arcname=f"antigravity-cli/{path.name}", recursive=True)
-            for path in iter_gemini_identity_entries(gemini_home):
-                tar.add(path, arcname=f"gemini/{path.name}", recursive=False)
             tar.add(temp_metadata_path, arcname=temp_metadata_path.name, recursive=False)
 
 
 def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
     antigravity_home = Path(args.source_dir).expanduser()
-    gemini_home = Path(args.gemini_home).expanduser()
     if not antigravity_home.is_dir():
         raise FileNotFoundError(f"Antigravity directory does not exist: {antigravity_home}")
 
@@ -220,7 +208,6 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
         status,
         archive_path,
         source_antigravity_home=antigravity_home,
-        source_gemini_home=gemini_home,
         backup_mode="auth-only" if getattr(args, "auth_only", False) else "full",
         include_bin=getattr(args, "include_bin", False),
         include_logs=getattr(args, "include_logs", False),
@@ -245,7 +232,6 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
         metadata_path=metadata_path,
         metadata=metadata,
         antigravity_home=antigravity_home,
-        gemini_home=gemini_home,
         auth_only=getattr(args, "auth_only", False),
         include_bin=getattr(args, "include_bin", False),
         include_logs=getattr(args, "include_logs", False),

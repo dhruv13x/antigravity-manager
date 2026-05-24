@@ -13,7 +13,6 @@ from .config import (
     DEFAULT_BACKUP_DIR,
     DEFAULT_COOLDOWN_DISPLAY_LIMIT,
     DEFAULT_DECISION_MODEL,
-    GEMINI_HOME,
 )
 from .cooldown import evaluate_entries, format_remaining, print_statuses_table
 from .credentials import resolve_credentials
@@ -67,8 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backup_parser.add_argument(
         "--gemini-home",
-        default=str(GEMINI_HOME),
-        help="Gemini home containing shared identity files.",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     backup_parser.add_argument(
         "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup output directory."
@@ -115,8 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     restore_parser.add_argument(
         "--gemini-home",
-        default=str(GEMINI_HOME),
-        help="Gemini home containing shared identity files.",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     restore_parser.add_argument(
         "--full",
@@ -187,8 +186,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recommend_parser.add_argument(
         "--gemini-home",
-        default=str(GEMINI_HOME),
-        help="Gemini home containing shared identity files.",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     recommend_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be restored with --use."
@@ -206,8 +205,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     use_parser.add_argument(
         "--gemini-home",
-        default=str(GEMINI_HOME),
-        help="Gemini home containing shared identity files.",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     use_parser.add_argument("--dry-run", action="store_true", help="Show what would be restored.")
 
@@ -219,8 +218,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument(
         "--gemini-home",
-        default=str(GEMINI_HOME),
-        help="Gemini home containing shared identity files.",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     doctor_parser.add_argument(
         "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory."
@@ -433,7 +432,6 @@ def handle_use(args: argparse.Namespace) -> None:
 def handle_doctor(args: argparse.Namespace) -> None:
     checks = run_doctor(
         antigravity_home=Path(args.source_dir).expanduser(),
-        gemini_home=Path(args.gemini_home).expanduser(),
         backup_dir=Path(args.backup_dir).expanduser(),
         args=args,
     )

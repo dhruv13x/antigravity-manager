@@ -28,10 +28,12 @@ Default paths:
 - Manager state: `~/.antigravity-manager`
 - Backups: `~/.antigravity-manager/backups`
 - Antigravity CLI state: `~/.gemini/antigravity-cli`
-- Shared Gemini identity files: `~/.gemini`
 
 `agm restore` is auth-only by default. Use `--full` only when you want to replace
 the whole Antigravity CLI state directory.
+
+`agm` is scoped to the Antigravity CLI state directory and does not back up,
+restore, or mutate files directly under `~/.gemini`.
 
 Backups and recommendations use `Gemini 3.5 Flash` as the default decision
 model. If Antigravity exposes a reset time for that model, the backup filename is
