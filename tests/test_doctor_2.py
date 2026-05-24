@@ -1,7 +1,16 @@
 from antigravity_manager.doctor import run_doctor
 
+
 def test_run_doctor_pass(tmp_path, monkeypatch):
     import shutil
+
+    monkeypatch.setattr(
+        "antigravity_manager.doctor.resolve_credentials",
+        lambda *a, **kw: ("key", "secret", "b", "url"),
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.doctor.verify_cloud_connectivity", lambda *a, **kw: True
+    )
     monkeypatch.setattr(shutil, "which", lambda x: "cmd")
     x = tmp_path / "x"
     x.mkdir()

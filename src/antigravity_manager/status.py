@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from .ui import console
+from .ui import RenderableType, console
 
 EMAIL_AND_PLAN_RE = re.compile(
     r"(?P<email>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:\s*\((?P<plan>[^)]+)\))?",
@@ -247,26 +247,54 @@ def parse_live_status_text(text: str, *, now: datetime | None = None) -> LiveSta
     )
 
 
-def live_status_to_text(status: LiveStatus) -> str:
-    lines = [
-        f"email: {status.email}",
-        f"plan: {status.plan}",
-        f"is_pro: {status.is_pro}",
-        f"captured_at: {status.captured_at.isoformat()}",
-        "",
-        "models:",
-    ]
+def live_status_to_text(status: LiveStatus) -> RenderableType:
+    from .ui import Group, Panel, Table, Text
+
+    header = Table.grid(padding=(0, 2))
+    header.add_column(style="bold cyan", justify="right")
+    header.add_column(style="white")
+
+    header.add_row("Account:", status.email)
+    plan_label = "PRO" if status.is_pro else "STANDARD"
+    header.add_row("Plan:", f"{status.plan} [dim]({plan_label})[/dim]")
+    header.add_row("Captured At:", status.captured_at.strftime("%Y-%m-%d %H:%M:%S %Z"))
+
+    model_table = Table(show_header=True, header_style="bold bright_magenta", box=None)
+    model_table.add_column("Model", style="bold bright_cyan")
+    model_table.add_column("Quota", justify="right")
+    model_table.add_column("State", justify="center")
+    model_table.add_column("Refresh", justify="right", style="dim")
+
     for model in status.models:
-        lines.extend(
-            [
-                f"  - model_name: {model.model_name}",
-                f"    quota_percent_left: {model.quota_percent_left}",
-                f"    available: {model.is_available}",
-                f"    refresh_in: {model.refresh_in_text or 'Quota available'}",
-                (
-                    "    refresh_at: "
-                    f"{model.refresh_at.isoformat() if model.refresh_at else 'available_now'}"
-                ),
-            ]
+        quota_text = (
+            f"{model.quota_percent_left}%" if model.quota_percent_left is not None else "unknown"
         )
-    return "\n".join(lines)
+        state_text = "[success]Ready[/]" if model.is_available else "[danger]Cooldown[/]"
+
+        if model.quota_percent_left is not None:
+            if model.quota_percent_left >= 50:
+                quota_text = f"[success]{quota_text}[/]"
+            elif model.quota_percent_left >= 20:
+                quota_text = f"[warning]{quota_text}[/]"
+            elif model.quota_percent_left > 0:
+                quota_text = f"[yellow]{quota_text}[/]"
+            else:
+                quota_text = f"[danger]{quota_text}[/]"
+
+        refresh_text = model.refresh_in_text or "available now"
+
+        model_table.add_row(model.model_name, quota_text, state_text, refresh_text)
+
+    content_group = Group(
+        header,
+        Text(""),
+        Text("Models:", style="bold bright_magenta"),
+        model_table,
+    )
+
+    return Panel(
+        content_group,
+        title="[bold bright_cyan]Antigravity Live Status[/]",
+        border_style="bright_cyan",
+        expand=False,
+    )

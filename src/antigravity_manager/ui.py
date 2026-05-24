@@ -1,29 +1,62 @@
 from __future__ import annotations
 
 import sys
-from rich.console import Console
+
+from rich.align import Align
+from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
+from rich.prompt import Confirm
 from rich.table import Table
+from rich.text import Text
+from rich.theme import Theme
+from rich.tree import Tree
 
-console = Console()
-error_console = Console(stderr=True)
+# Centralized theme
+custom_theme = Theme(
+    {
+        "info": "dim cyan",
+        "warning": "magenta",
+        "danger": "bold red",
+        "success": "bold green",
+        "accent": "bold cyan",
+        "muted": "dim white",
+        "highlight": "bold bright_magenta",
+    }
+)
 
-__all__ = ["Panel", "Table", "console", "error_console", "Confirm", "banner", "print_rich_help"]
+console = Console(theme=custom_theme)
+error_console = Console(stderr=True, theme=custom_theme)
+
+__all__ = [
+    "Panel",
+    "Table",
+    "console",
+    "error_console",
+    "Confirm",
+    "banner",
+    "print_rich_help",
+    "Text",
+    "Tree",
+    "Align",
+    "Group",
+    "RenderableType",
+]
 
 
 def banner() -> None:
     from .banner import print_logo
+
     print_logo()
 
 
 def print_rich_help() -> None:
     console.print(
-        "[bold white]Usage:[/] [bold cyan]agm[/] [dim][OPTIONS][/] [bold magenta]COMMAND[/] [dim][ARGS]...[/]\n"
+        "[bold white]Usage:[/] [accent]agm[/] [muted][OPTIONS][/] [highlight]COMMAND[/] [muted][ARGS]...[/]\n"
     )
 
     # Commands Table
     cmd_table = Table(show_header=False, box=None, padding=(0, 2))
-    cmd_table.add_column("Command", style="bold cyan", width=20)
+    cmd_table.add_column("Command", style="accent", width=20)
     cmd_table.add_column("Description", style="white")
 
     commands = [
@@ -48,12 +81,14 @@ def print_rich_help() -> None:
         cmd_table.add_row(cmd, desc)
 
     console.print(
-        Panel(cmd_table, title="[bold magenta]Available Commands[/]", border_style="cyan")
+        Panel(
+            cmd_table, title="[highlight]Available Commands[/]", border_style="cyan", expand=False
+        )
     )
 
     # Options Table
     opt_table = Table(show_header=False, box=None, padding=(0, 2))
-    opt_table.add_column("Option", style="bold yellow", width=20)
+    opt_table.add_column("Option", style="warning", width=20)
     opt_table.add_column("Description", style="white")
 
     options = [
@@ -66,8 +101,5 @@ def print_rich_help() -> None:
     for opt, desc in options:
         opt_table.add_row(opt, desc)
 
-    console.print(Panel(opt_table, title="[bold yellow]Options[/]", border_style="green"))
+    console.print(Panel(opt_table, title="[warning]Options[/]", border_style="green", expand=False))
     sys.exit(0)
-
-
-from rich.prompt import Confirm

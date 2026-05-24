@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .registry import load_registry, save_registry
-from .ui import Confirm, console
+from .ui import Confirm, RenderableType, console
 
 
 def perform_remove(args: Any) -> dict[str, Any]:
@@ -25,9 +25,7 @@ def perform_remove(args: Any) -> dict[str, Any]:
     if backup_dir.exists():
         for p in backup_dir.glob("*"):
             is_match = f"-{email}-" in p.name or p.name.startswith(f"{email}-latest-")
-            if is_match and (
-                p.name.endswith(".tar.gz") or p.name.endswith(".metadata.json")
-            ):
+            if is_match and (p.name.endswith(".tar.gz") or p.name.endswith(".metadata.json")):
                 local_files.append(p)
 
     # 3. Confirmation
@@ -58,18 +56,26 @@ def perform_remove(args: Any) -> dict[str, Any]:
     return results
 
 
-def remove_result_to_text(results: dict[str, Any], email: str, dry_run: bool) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'removed'}",
-        f"email: {email}",
-    ]
+def remove_result_to_text(results: dict[str, Any], email: str, dry_run: bool) -> RenderableType:
+    from .ui import Panel, Tree
 
-    lines.append(f"local_files_removed: {len(results['local_files_removed'])}")
-    for f in results["local_files_removed"]:
-        lines.append(f"  - {f}")
-
-    lines.append(
-        f"local_registry_removed: {'YES' if results['local_registry_removed'] else 'NO (not found)'}"
+    title = (
+        f"[warning]Remove Plan for {email} (Dry Run)[/]"
+        if dry_run
+        else f"[danger]Account Removed: {email}[/]"
     )
+    border_style = "warning" if dry_run else "danger"
 
-    return "\n".join(lines)
+    tree = Tree(f"[bold red]Traces Removed for {email}[/]")
+
+    if results.get("local_files_removed"):
+        for path in results["local_files_removed"]:
+            tree.add(f"[bold]local file[/]: {path}")
+
+    if results.get("local_registry_removed"):
+        tree.add(f"[bold]registry entry[/]: {email}")
+
+    if not results.get("local_files_removed") and not results.get("local_registry_removed"):
+        tree.add(f"[yellow]No removal actions taken for {email}.[/]")
+
+    return Panel(tree, title=title, border_style=border_style, expand=False)

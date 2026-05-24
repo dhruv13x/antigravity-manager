@@ -27,7 +27,7 @@ def run_doctor(
         ("gemini_home", gemini_home, str(gemini_home)),
         ("backup_dir", backup_dir, str(backup_dir)),
     ]
-    for name, path, detail in dirs:
+    for name, path, _ in dirs:
         if path.is_dir():
             if os.access(path, os.W_OK):
                 checks.append((f"Dir: {name}", True, f"Writable: {path}"))
@@ -52,7 +52,17 @@ def run_doctor(
             access_key=access_key,
             secret_key=secret_key,
         )
-        checks.append(("Cloud (B2)", cloud_ok, f"Authenticated (Bucket: {bucket_name})" if cloud_ok else f"Failed (Bucket: {bucket_name})"))
+        checks.append(
+            (
+                "Cloud (B2)",
+                cloud_ok,
+                (
+                    f"Authenticated (Bucket: {bucket_name})"
+                    if cloud_ok
+                    else f"Failed (Bucket: {bucket_name})"
+                ),
+            )
+        )
     else:
         checks.append(("Cloud (B2)", False, "No bucket configured"))
 
@@ -61,10 +71,10 @@ def run_doctor(
 
 def print_doctor_table(checks: list[tuple[str, bool, str]]) -> None:
     from .banner import print_logo
-    from .ui import Panel, Table, console
+    from .ui import Table, console
 
     print_logo()
-    console.print("[bold cyan]🩺  Running System Diagnostic...[/]")
+    console.print("[bold cyan]Running System Diagnostic...[/]")
 
     table = Table(show_header=True, header_style="bold bright_magenta")
     table.add_column("Component", style="bright_cyan")
