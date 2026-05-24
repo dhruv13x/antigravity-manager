@@ -418,7 +418,9 @@ def handle_purge(args: argparse.Namespace) -> None:
     perform_purge(args)
 
 def handle_remove(args: argparse.Namespace) -> None:
-    perform_remove(args)
+    results = perform_remove(args)
+    from .remove import remove_result_to_text
+    console.print(remove_result_to_text(results, args.email, getattr(args, "dry_run", False)))
 
 def handle_profile(args: argparse.Namespace) -> None:
     perform_profile(args)
