@@ -415,7 +415,9 @@ def handle_prune_backups(args: argparse.Namespace) -> None:
     )
 
 def handle_purge(args: argparse.Namespace) -> None:
-    perform_purge(args)
+    success = perform_purge(args)
+    from .purge import purge_result_to_text
+    console.print(purge_result_to_text(success, Path(args.source_dir).expanduser(), getattr(args, "dry_run", False)))
 
 def handle_remove(args: argparse.Namespace) -> None:
     results = perform_remove(args)
