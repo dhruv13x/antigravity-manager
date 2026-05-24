@@ -1,227 +1,746 @@
+#!/usr/bin/env python3
+# src/gemini_manager/restore.py
+
+"""
+restore.py - Safe restore that picks the oldest timestamped backup by default.
+
+Naming convention expected for automatic discovery (produced by backup.py):
+  YYYY-MM-DD_HHMMSS-<email>.gemini-manager
+Examples:
+  2025-10-22_042211-bose13x@gmail.com.gemini-manager
+  2025-10-21_020211-kingchess@gmail.com.gemini-manager
+
+Behavior:
+ - If --from-dir or --from-archive is passed, those are used.
+ - If nothing is passed, script scans --search-dir (default /root) for
+   directories matching the timestamp pattern and picks the oldest (earliest)
+   timestamp to restore.
+ - Safety: lockfile, temp copy, diff verification, .bak move of existing ~/.gemini-manager,
+   atomic replace, dry-run and --force supported.
+"""
 from __future__ import annotations
-
-import json
-import re
+import argparse
+from .protected import ProtectedPathManager, copytree_excluding_protected, get_diff_excludes, remove_protected_children
+import fcntl
+import os
+import shlex
 import shutil
-import tarfile
+import subprocess
+import sys
 import tempfile
-from datetime import datetime
-from pathlib import Path
+import time
+from typing import Optional, Tuple
+from .config import DEFAULT_BACKUP_DIR, NEON_GREEN, NEON_RED, NEON_YELLOW, NEON_CYAN, TIMESTAMPED_DIR_REGEX, OLD_CONFIGS_DIR, GEMINI_CLI_HOME, DEFAULT_GEMINI_HOME
+from .cloud_factory import get_cloud_provider
+from .session import get_active_session
+from .cooldown import record_switch
+from .reset_helpers import add_24h_cooldown_for_email, sync_resets_with_cloud
+from .recommend import get_recommendation
+from .ui import cprint, NEON_YELLOW, NEON_RED, NEON_GREEN, NEON_CYAN
 
-from .config import CODEX_MANAGER_HOME
+LOCKFILE = os.path.join(GEMINI_CLI_HOME, ".backup.lock")
+AUTH_ONLY_INCLUDES = {
+    "google_accounts.json",
+    "oauth_creds.json",
+    "installation_id",
+    "settings.json",
+}
 
-
-def _safe_backup_label(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9@._-]+", "_", value).strip("._-") or "unknown"
-
-
-def identify_auth_email(auth_path: Path) -> str | None:
+def acquire_lock(path: str = LOCKFILE):
+    # Ensure the directory for the lockfile exists
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = open(path, "w+")
     try:
-        data = json.loads(auth_path.read_text(encoding="utf-8"))
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("Another backup/restore is running. Exiting.")
+        sys.exit(2)
+    return fd
+
+def run(cmd: str, check: bool = True, capture: bool = False):
+    if capture:
+        return subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return subprocess.run(cmd, shell=True, check=check)
+
+def shlex_quote(s: str) -> str:
+    return shlex.quote(s)
+
+def parse_timestamp_from_name(name: str) -> Optional[time.struct_time]:
+    """
+    Parse timestamp prefix like '2025-10-22_042211' into struct_time.
+    Supports archives, snapshots (new & legacy), and legacy directories.
+    """
+    from .config import ARCHIVE_REGEX, SNAPSHOT_REGEX, TIMESTAMPED_DIR_REGEX
+    
+    # Check current patterns
+    match = ARCHIVE_REGEX.match(name) or SNAPSHOT_REGEX.match(name) or TIMESTAMPED_DIR_REGEX.match(name)
+    
+    # Fallback for legacy .metadata.json snapshots
+    if not match and name.endswith(".metadata.json"):
+        # Pattern: YYYY-MM-DD_HHMMSS-<email>.gemini-manager.metadata.json
+        # We reuse TIMESTAMPED_DIR_REGEX logic by stripping the suffix
+        legacy_name = name[:-14] # strip .metadata.json
+        match = TIMESTAMPED_DIR_REGEX.match(legacy_name)
+
+    if not match:
+        return None
+    
+    ts_str = match.group(1)  # 'YYYY-MM-DD_HHMMSS'
+    try:
+        return time.strptime(ts_str, "%Y-%m-%d_%H%M%S")
     except Exception:
         return None
 
-    email = data.get("email")
-    return email if isinstance(email, str) and email.strip() else None
+def is_backup_archive(filename: str) -> bool:
+    """
+    Check if a filename follows the Gemini Manager backup archive naming convention.
+    Matches *.gemini-manager.tar.gz or *.gemini-manager.tar.gz.gpg.
+    """
+    return filename.endswith(".gemini-manager.tar.gz") or filename.endswith(".gemini-manager.tar.gz.gpg")
+
+def find_oldest_archive_backup(search_dir: str) -> Optional[str]:
+    """
+    Search search_dir for backup archives matching the timestamp pattern
+    and return the full path of the oldest backup (earliest timestamp).
+    Pattern: YYYY-MM-DD_HHMMSS-*.gemini-manager.tar.gz
+    """
+    candidates: list[Tuple[time.struct_time, str]] = []
+    try:
+        for entry in os.listdir(search_dir):
+            full_path = os.path.join(search_dir, entry)
+            if not (os.path.isfile(full_path) and is_backup_archive(entry)):
+                continue
+
+            ts = parse_timestamp_from_name(entry)
+            if ts:
+                candidates.append((ts, full_path))
+    except FileNotFoundError:
+        return None
+
+    if not candidates:
+        return None
+
+    # Sort by timestamp struct_time ascending (earliest first)
+    candidates.sort(key=lambda x: time.mktime(x[0]))
+    return candidates[0][1]
 
 
-def resolve_archive_path(args) -> Path:
-    if getattr(args, "from_archive", None):
-        archive_path = Path(args.from_archive).expanduser()
-    elif getattr(args, "email", None):
-        backup_dir = Path(args.backup_dir).expanduser()
-        archive_path = backup_dir / f"{args.email}-latest-codex.tar.gz"
-        if not archive_path.exists():
-            # Fallback: Find latest matching archive for this email
-            try:
-                archive_path = latest_backup_archive(backup_dir, email=args.email)
-            except FileNotFoundError:
-                if list(backup_dir.glob(f"*-{args.email}-codex.metadata.json")):
-                    raise FileNotFoundError(
-                        f"Cannot use account '{args.email}': Only metadata exists (no backup archive). "
-                        "The account may have been pruned or saved as metadata-only."
-                    )
-                # Re-raise or let it fall through to the .exists() check below
-                pass
-    else:
-        archive_path = latest_backup_archive(Path(args.backup_dir).expanduser())
-
-    if not archive_path.exists():
-        raise FileNotFoundError(f"Backup archive does not exist: {archive_path}")
-    return archive_path.resolve()
-
-
-def latest_backup_archive(backup_dir: Path, email: str | None = None) -> Path:
-    if not backup_dir.exists():
-        raise FileNotFoundError(f"Backup directory does not exist: {backup_dir}")
+def find_latest_archive_backup_for_email(search_dir: str, email: str) -> Optional[str]:
+    """
+    Search search_dir for backup archives matching the timestamp pattern AND the email.
+    Returns the LATEST (newest) backup.
     
-    pattern = "*-codex.tar.gz"
-    if email:
-        pattern = f"*-{email}-codex.tar.gz"
-        
-    archives = sorted(
-        [
-            p for p in backup_dir.glob(pattern)
-            if "-latest-" not in p.name
-        ],
-        key=lambda path: path.name,
-        reverse=True,
-    )
-    
-    if not archives:
-        msg = f"No Codex backup archives found in: {backup_dir}"
-        if email:
-            msg = f"No Codex backup archives found for email {email} in: {backup_dir}"
-        raise FileNotFoundError(msg)
-    return archives[0]
+    Format example: 2026-05-13_120000-user@example.com.gemini-manager.tar.gz
+    """
+    candidates: list[Tuple[time.struct_time, str]] = []
+    try:
+        for entry in os.listdir(search_dir):
+            full_path = os.path.join(search_dir, entry)
+            if not (os.path.isfile(full_path) and is_backup_archive(entry)):
+                continue
+
+            # Extract suffix after timestamp (first 18 chars: YYYY-MM-DD_HHMMSS-)
+            if len(entry) <= 18:
+                continue
+
+            suffix = entry[18:] # <email>.gemini-manager.tar.gz[.gpg]
+
+            email_in_file = None
+            if suffix.endswith(".gemini-manager.tar.gz"):
+                 email_in_file = suffix[:-22]
+            elif suffix.endswith(".gemini-manager.tar.gz.gpg"):
+                 email_in_file = suffix[:-26]
+            else:
+                continue
+
+            if email_in_file != email:
+                continue
+
+            ts = parse_timestamp_from_name(entry)
+            if ts:
+                candidates.append((ts, full_path))
+    except FileNotFoundError:
+        return None
+
+    if not candidates:
+        return None
+
+    # Sort by timestamp struct_time DESCENDING (latest first)
+    candidates.sort(key=lambda x: time.mktime(x[0]), reverse=True)
+    return candidates[0][1]
 
 
-def metadata_path_for_archive(archive_path: Path) -> Path:
-    return archive_path.with_name(archive_path.name.replace(".tar.gz", ".metadata.json"))
+def _email_from_archive_name(filename: str) -> Optional[str]:
+    """
+    Extract email from backup archive filename.
+    Matches logic in list_backups.py.
+    """
+    if len(filename) <= 18:
+        return None
+
+    suffix = filename[18:]
+    if suffix.endswith(".gemini-manager.tar.gz"):
+        return suffix[:-22]
+    if suffix.endswith(".gemini-manager.tar.gz.gpg"):
+        return suffix[:-26]
+    return None
 
 
-def load_metadata_for_archive(archive_path: Path) -> dict:
-    metadata_path = metadata_path_for_archive(archive_path)
-    if metadata_path.exists():
+def _latest_cloud_backup_for_email(all_files, email: str) -> Optional[str]:
+    candidates = [
+        (ts, fname)
+        for ts, fname in all_files
+        if _email_from_archive_name(fname) == email
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: time.mktime(x[0]), reverse=True)
+    return candidates[0][1]
+
+
+def _copy_auth_only_files(src_for_copy: str, dest: str, dry_run: bool) -> list[str]:
+    copied = []
+    os.makedirs(dest, exist_ok=True)
+
+    for name in sorted(AUTH_ONLY_INCLUDES):
+        src_path = os.path.join(src_for_copy, name)
+        dest_path = os.path.join(dest, name)
+        if not os.path.exists(src_path):
+            continue
+
+        copied.append(name)
+        if dry_run:
+            cprint(NEON_YELLOW, f"[DRY-RUN] Would restore identity file: {name}")
+            continue
+
+        if os.path.isdir(src_path) and not os.path.islink(src_path):
+            if os.path.exists(dest_path):
+                shutil.rmtree(dest_path)
+            shutil.copytree(src_path, dest_path)
+        else:
+            shutil.copy2(src_path, dest_path)
+
+    return copied
+
+
+def _backup_current_auth_files(dest: str, ts_now: str, dry_run: bool) -> Optional[str]:
+    existing = [
+        name
+        for name in sorted(AUTH_ONLY_INCLUDES)
+        if os.path.exists(os.path.join(dest, name))
+    ]
+    if not existing:
+        return None
+
+    backup_dir = os.path.join(OLD_CONFIGS_DIR, f".gemini-auth.bak-{ts_now}")
+    if dry_run:
+        cprint(NEON_YELLOW, f"[DRY-RUN] Would back up current identity files to {backup_dir}")
+        return backup_dir
+
+    os.makedirs(backup_dir, exist_ok=True)
+    for name in existing:
+        src_path = os.path.join(dest, name)
+        dest_path = os.path.join(backup_dir, name)
+        if os.path.isdir(src_path) and not os.path.islink(src_path):
+            shutil.copytree(src_path, dest_path)
+        else:
+            shutil.copy2(src_path, dest_path)
+    return backup_dir
+
+
+def extract_archive(archive_path: str, extract_to: str):
+    os.makedirs(extract_to, exist_ok=True)
+
+    # Handle Decryption if .gpg
+    final_archive_path = archive_path
+    decrypted_tmp_path = None
+
+    if archive_path.endswith(".gpg"):
+        print(f"Detected encrypted backup: {archive_path}")
+        passphrase = os.environ.get("GEMINI_BACKUP_PASSWORD")
+        if not passphrase:
+            import getpass
+            passphrase = getpass.getpass("Enter passphrase to decrypt backup: ")
+
+        if not passphrase:
+            print("Error: Passphrase required for decryption.")
+            sys.exit(1)
+
+        decrypted_tmp_path = archive_path[:-4] # Remove .gpg
+        if os.path.exists(decrypted_tmp_path):
+             decrypted_tmp_path += f".decrypted-{int(time.time())}"
+
+        # gpg --decrypt --batch --passphrase-fd 0 --output <out> <in>
+        gpg_cmd = [
+            "gpg", "--decrypt", "--batch", "--yes", "--passphrase-fd", "0",
+            "--output", decrypted_tmp_path, archive_path
+        ]
+
+        print("Decrypting...")
         try:
-            return json.loads(metadata_path.read_text(encoding="utf-8"))
+             proc = subprocess.run(gpg_cmd, input=passphrase.encode(), check=False)
+             if proc.returncode != 0:
+                 print("Error: GPG decryption failed. Incorrect password?")
+                 sys.exit(1)
+             final_archive_path = decrypted_tmp_path
+        except FileNotFoundError:
+             print("Error: 'gpg' command not found.")
+             sys.exit(1)
+
+    try:
+        cmd = f"tar -C {shlex_quote(extract_to)} -xzf {shlex_quote(final_archive_path)}"
+        run(cmd)
+    finally:
+        if decrypted_tmp_path and os.path.exists(decrypted_tmp_path):
+            os.remove(decrypted_tmp_path)
+
+def perform_restore(args: argparse.Namespace):
+    email_before = get_active_session()
+    
+    # --- Auto-Status Capture for Outgoing Account ---
+    # Capture current state BEFORE we wipe ~/.gemini with the restore
+    if not getattr(args, 'dry_run', False) and email_before:
+        try:
+            from .status import do_status
+            cprint(NEON_CYAN, f"Capturing final status for outgoing account: {email_before}...")
+            # We call do_status with cloud=True if the restore is cloud-based
+            # to ensure the outgoing account's quota is synced everywhere.
+            status_args = argparse.Namespace(cloud=getattr(args, 'cloud', False))
+            # Merge B2 credentials if provided to restore
+            for attr in ['bucket', 'b2_id', 'b2_key']:
+                setattr(status_args, attr, getattr(args, attr, None))
+            
+            do_status(status_args)
+            cprint(NEON_GREEN, "[OK] Final status captured and synced.")
+        except Exception as e:
+            cprint(NEON_YELLOW, f"[WARN] Failed to capture final status: {e}")
+            cprint(NEON_YELLOW, "[HINT] Cooldown dashboard might be slightly out-of-date for this account.")
+    # -----------------------------------------------
+
+    # Check for required args if not set (legacy check)
+    if not hasattr(args, 'dest') or args.dest is None:
+        args.dest = DEFAULT_GEMINI_HOME
+
+    # Handle search_dir default if missing
+    if not hasattr(args, 'search_dir') or args.search_dir is None:
+        args.search_dir = DEFAULT_BACKUP_DIR
+
+    auth_only = not getattr(args, 'full', False)
+    if getattr(args, 'auth_only', False) and getattr(args, 'full', False):
+        cprint(NEON_RED, "Choose either --auth-only or --full, not both.")
+        sys.exit(1)
+
+    dest = os.path.abspath(os.path.expanduser(args.dest))
+    ts_now = time.strftime("%Y%m%d-%H%M%S")
+
+    chosen_src: Optional[str] = None
+    from_archive: Optional[str] = None
+    temp_download_path: Optional[str] = None # Initialize for cloud downloads
+
+    # --- NEW CODE BLOCK: CLOUD DISCOVERY ---
+    if hasattr(args, 'cloud') and args.cloud:
+        provider = get_cloud_provider(args)
+        if not provider:
+            sys.exit(1)
+        
+        # 1. List backups
+        print("Fetching file list from Cloud...")
+        files = provider.list_files()
+        all_files = []
+        for f in files:
+            if is_backup_archive(f.name):
+                ts = parse_timestamp_from_name(f.name)
+                if ts:
+                    all_files.append((ts, f.name))
+        
+        if not all_files:
+            print("No valid backups found in Cloud bucket.")
+            sys.exit(1)
+
+        target_file_name = None
+
+        if getattr(args, 'email', None):
+            target_email = args.email
+            target_file_name = _latest_cloud_backup_for_email(all_files, target_email)
+            if not target_file_name:
+                cprint(NEON_RED, f"No backups found in cloud for account: {target_email}")
+                sys.exit(1)
+            cprint(NEON_GREEN, f"Selected latest cloud backup for {target_email}: {target_file_name}")
+
+        elif hasattr(args, 'auto') and args.auto:
+            rec = get_recommendation()
+            if not rec:
+                cprint(NEON_RED, "No 'Green' (Ready) accounts available for auto-switch.")
+                sys.exit(1)
+
+            target_email = rec.email
+            cprint(NEON_CYAN, f"Auto-switch recommendation: {target_email}")
+
+            target_file_name = _latest_cloud_backup_for_email(all_files, target_email)
+            if not target_file_name:
+                cprint(NEON_RED, f"No backups found in cloud for recommended account: {target_email}")
+                sys.exit(1)
+
+            cprint(NEON_GREEN, f"Selected latest cloud backup for {target_email}: {target_file_name}")
+
+        elif hasattr(args, 'from_archive') and args.from_archive:
+            # User requested a specific file
+            wanted_name = os.path.basename(args.from_archive)
+            # Check if it exists in the list we just fetched
+            for _, fname in all_files:
+                if fname == wanted_name:
+                    target_file_name = fname
+                    break
+            
+            if target_file_name:
+                print(f"Selected specified cloud backup: {target_file_name}")
+            else:
+                print(f"Error: Specified archive '{wanted_name}' not found in Cloud bucket.")
+                sys.exit(1)
+        else:
+            # 2. Auto-select oldest (matches existing logic)
+            # Sorting by timestamp (earliest first)
+            all_files.sort(key=lambda x: time.mktime(x[0]))
+            target_file_name = all_files[0][1]
+            print(f"Auto-selected oldest cloud backup: {target_file_name}")
+
+        # 3. Download to a temporary file
+        temp_download_path = os.path.join(tempfile.gettempdir(), target_file_name)
+        # Ensure the directory for the temporary download exists
+        os.makedirs(os.path.dirname(temp_download_path), exist_ok=True)
+
+        try:
+            provider.download_file(target_file_name, temp_download_path)
+        except Exception:
+            sys.exit(1)
+        
+        from_archive = temp_download_path
+    # ---------------------------------------
+
+    elif getattr(args, 'email', None):
+        target_email = args.email
+        sd = os.path.abspath(os.path.expanduser(args.search_dir))
+        latest_archive = find_latest_archive_backup_for_email(sd, target_email)
+
+        if not latest_archive:
+            cprint(NEON_RED, f"No backups found locally for account: {target_email}")
+            sys.exit(1)
+
+        from_archive = latest_archive
+        cprint(NEON_GREEN, f"Selected latest local backup for {target_email}: {from_archive}")
+
+    elif hasattr(args, 'auto') and args.auto:
+        rec = get_recommendation()
+        if not rec:
+            cprint(NEON_RED, "No 'Green' (Ready) accounts available for auto-switch.")
+            sys.exit(1)
+
+        target_email = rec.email
+        cprint(NEON_CYAN, f"Auto-switch recommendation: {target_email}")
+
+        sd = os.path.abspath(os.path.expanduser(args.search_dir))
+        latest_archive = find_latest_archive_backup_for_email(sd, target_email)
+
+        if not latest_archive:
+            cprint(NEON_RED, f"No backups found locally for recommended account: {target_email}")
+            sys.exit(1)
+
+        from_archive = latest_archive
+        cprint(NEON_GREEN, f"Selected latest local backup for {target_email}: {from_archive}")
+
+    elif hasattr(args, 'from_dir') and args.from_dir:
+        chosen_src = os.path.abspath(os.path.expanduser(args.from_dir))
+        if not os.path.exists(chosen_src):
+            print(f"Specified --from-dir not found: {chosen_src}")
+            sys.exit(1)
+    elif hasattr(args, 'from_archive') and args.from_archive:
+        # First, try the path as provided by the user
+        user_path = os.path.abspath(os.path.expanduser(args.from_archive))
+        
+        # If not found, try looking in the default search directory
+        if not os.path.exists(user_path):
+            search_dir = os.path.abspath(os.path.expanduser(args.search_dir))
+            basename = os.path.basename(user_path)
+            path_in_search_dir = os.path.join(search_dir, basename)
+            
+            if os.path.exists(path_in_search_dir):
+                from_archive = path_in_search_dir
+                print(f"Found archive in default backup directory: {from_archive}")
+            else:
+                print(f"Specified --from-archive not found at '{user_path}' or in search directory '{search_dir}'")
+                sys.exit(1)
+        else:
+            from_archive = user_path
+    else:
+        # Auto-discover oldest timestamped *archive* in search_dir
+        sd = os.path.abspath(os.path.expanduser(args.search_dir))
+        print(f"Searching for oldest backup archive in: {sd}")
+        oldest_archive = find_oldest_archive_backup(sd)
+        if not oldest_archive:
+            print(f"No timestamped backup archives (*.gemini-manager.tar.gz) found in {sd}")
+            sys.exit(1)
+        
+        from_archive = oldest_archive
+        print(f"Auto-selected oldest backup archive: {from_archive}")
+
+    email_label = f"-{email_before}" if email_before else "-unknown-session"
+
+    lockfd = acquire_lock()
+    try:
+        work_tmp = tempfile.mkdtemp(prefix="gm-restore-")
+        try:
+            if from_archive:
+                print(f"Extracting archive {from_archive} -> {work_tmp}")
+                if not getattr(args, 'dry_run', False):
+                    extract_archive(from_archive, work_tmp)
+                else:
+                    print("DRY RUN: would extract archive.")
+                src_for_copy = work_tmp
+            else:
+                # chosen_src is set (either provided or auto-selected)
+                src_for_copy = os.path.abspath(chosen_src)
+                print("Source to restore from:", src_for_copy)
+
+            if auth_only:
+                cprint(NEON_CYAN, "Restore mode: auth-only (preserving current sessions, history, and project state)")
+                backup_dir = _backup_current_auth_files(dest, f"{ts_now}{email_label}", getattr(args, 'dry_run', False))
+                copied = _copy_auth_only_files(src_for_copy, dest, getattr(args, 'dry_run', False))
+                if not copied:
+                    cprint(NEON_RED, "No Gemini identity files found in selected backup.")
+                    sys.exit(5)
+                cprint(NEON_GREEN, f"Auth-only restore complete. Restored: {', '.join(copied)}")
+                if backup_dir:
+                    print("Previous identity files copied to:", backup_dir)
+            else:
+                cprint(NEON_CYAN, "Restore mode: full state (replacing current ~/.gemini)")
+
+            # Copy into temporary dest - to prepare verification
+            if not auth_only:
+                tmp_dest = f"{dest}.tmp-{ts_now}"
+                print(f"Copying {src_for_copy} -> {tmp_dest}")
+                if not getattr(args, 'dry_run', False):
+                    if os.path.exists(tmp_dest):
+                        shutil.rmtree(tmp_dest)
+                    try:
+                        copytree_excluding_protected(src_for_copy, tmp_dest)
+                    except FileNotFoundError:
+                        cp_cmd = f"cp -a {shlex_quote(src_for_copy)} {shlex_quote(tmp_dest)}"
+                        run(cp_cmd)
+                    if os.path.exists(tmp_dest):
+                        remove_protected_children(tmp_dest)
+                else:
+                    print("DRY RUN: would cp -a ...")
+
+            # Verify copy with diff -r
+            if not auth_only:
+                print("Verifying copy with diff -r")
+                if not getattr(args, 'dry_run', False):
+                    diff_excludes = get_diff_excludes()
+                    diff_proc = run(f"diff -r {diff_excludes} {shlex_quote(tmp_dest)} {shlex_quote(src_for_copy)}", capture=True, check=False)
+                    if diff_proc.returncode != 0:
+                        print("Verification FAILED (diff shows differences):")
+                        if diff_proc.stdout:
+                            print(diff_proc.stdout)
+                        shutil.rmtree(tmp_dest, ignore_errors=True)
+                        sys.exit(3)
+                    else:
+                        print("Verification OK.")
+                else:
+                    print("DRY RUN: would run diff -r ...")
+
+            # Prepare swap: move existing dest to archive unless --force
+            bakname = None
+            if not auth_only and os.path.exists(dest):
+                protected_mgr = ProtectedPathManager(dest)
+                if not getattr(args, 'dry_run', False):
+                    protected_mgr.park_protected_paths()
+
+                if not args.force:
+                    bak_filename = f"{ts_now}{email_label}.gemini-manager.bak"
+                    bakname = os.path.join(OLD_CONFIGS_DIR, bak_filename)
+                    
+                    if args.dry_run:
+                        cprint(NEON_YELLOW, f"[DRY-RUN] Would move existing {dest} to {bakname}")
+                    else:
+                        cprint(NEON_YELLOW, f"Backing up existing configuration to {bakname}...")
+                        # If destination archive exists (highly unlikely with timestamp), remove it first or it will fail/nest
+                        if os.path.exists(bakname):
+                             shutil.rmtree(bakname)
+                        
+                        # Check for circular move (moving a directory into itself)
+                        if os.path.abspath(bakname).startswith(os.path.abspath(dest) + os.sep):
+                             cprint(NEON_YELLOW, f"Circular move detected. Moving {dest} via temporary path...")
+                             tmp_move = dest + f".tmp_move_{int(time.time())}"
+                             shutil.move(dest, tmp_move)
+                             os.makedirs(os.path.dirname(bakname), exist_ok=True)
+                             shutil.move(tmp_move, bakname)
+                        else:
+                             shutil.move(dest, bakname)
+                else:
+                    if args.dry_run:
+                        cprint(NEON_YELLOW, f"[DRY-RUN] Would remove existing {dest} (--force)")
+                    else:
+                        cprint(NEON_YELLOW, f"Removing existing configuration (--force): {dest}")
+                        if os.path.isdir(dest) and not os.path.islink(dest):
+                            shutil.rmtree(dest)
+                        else:
+                            os.remove(dest)
+
+            # Install new .gm (atomic replace)
+            if not auth_only:
+                print(f"Installing new .gm from {tmp_dest} -> {dest}")
+                if not getattr(args, 'dry_run', False):
+                    try:
+                        os.replace(tmp_dest, dest)
+                    except OSError as e:
+                         # Fallback for cross-device link OR non-empty directory conflict
+                         # ENOTEMPTY (39) or EEXIST (17) or EBUSY (16)
+                         if e.errno in [16, 17, 18, 39]:
+                             if os.path.exists(dest):
+                                 if os.path.isdir(dest) and not os.path.islink(dest):
+                                     shutil.rmtree(dest)
+                                 else:
+                                     os.remove(dest)
+                             shutil.move(tmp_dest, dest)
+                         else:
+                             if 'protected_mgr' in locals():
+                                 protected_mgr.cleanup()
+                             raise e
+
+                    if 'protected_mgr' in locals():
+                        protected_mgr.restore_protected_paths()
+                else:
+                    print("DRY RUN: would os.replace(tmp_dest, dest)")
+
+            # Post-restore verification
+            if not auth_only:
+                if not getattr(args, 'dry_run', False):
+                    print("Post-restore verification: diff -r between restored dest and source")
+                    diff_excludes = get_diff_excludes()
+                    diff2 = run(f"diff -r {diff_excludes} {shlex_quote(dest)} {shlex_quote(src_for_copy)}", capture=True, check=False)
+                    if diff2.returncode != 0:
+                        print("Post-restore verification FAILED:")
+                        if diff2.stdout:
+                            print(diff2.stdout)
+                        print("Attempting rollback (if possible).")
+                        if not getattr(args, 'force', False) and bakname and os.path.exists(bakname):
+                            try:
+                                if 'protected_mgr' in locals():
+                                    protected_mgr.park_protected_paths()
+                                try:
+                                    try:
+                                        os.replace(bakname, dest)
+                                    except OSError as e:
+                                        if e.errno in [16, 17, 18, 39]:
+                                            if os.path.exists(dest):
+                                                if os.path.isdir(dest) and not os.path.islink(dest):
+                                                    shutil.rmtree(dest)
+                                                else:
+                                                    os.remove(dest)
+                                            shutil.move(bakname, dest)
+                                        else:
+                                            raise
+                                finally:
+                                    if 'protected_mgr' in locals():
+                                        protected_mgr.restore_protected_paths()
+                                print("Rollback to previous copy succeeded.")
+                            except Exception as e:
+                                print("Rollback failed:", e)
+                        sys.exit(4)
+                    else:
+                        print("Post-restore verification OK.")
+                else:
+                    print("DRY RUN: would run post-restore diff")
+
+            print("Restore complete.")
+            if bakname and os.path.exists(bakname):
+                print("Previous .gm moved to:", bakname)
+
+            # Check for account switch and record it
+            if not getattr(args, 'dry_run', False):
+                # --- Auto-Cooldown for Outgoing Account ---
+                if email_before:
+                    cprint(NEON_YELLOW, f"Auto-adding 24h cooldown for outgoing account: {email_before}")
+                    add_24h_cooldown_for_email(email_before)
+                    
+                    # Sync with Cloud
+                    try:
+                        # We need to sync resets.json to cloud if configured.
+                        # sync_resets_with_cloud expects a B2Manager-like object (with upload_string/download_to_string if B2).
+                        # But wait, generic provider has upload_file/download_file.
+                        # sync_resets_with_cloud logic might be coupled to B2Manager.
+                        
+                        # Let's check sync_resets_with_cloud in reset_helpers.py later.
+                        # For now, let's just try to get provider.
+                        
+                        provider_for_sync = None
+                        if getattr(args, 'cloud', False):
+                             provider_for_sync = locals().get('provider')
+
+                        if not provider_for_sync:
+                             provider_for_sync = get_cloud_provider(args)
+
+                        if provider_for_sync:
+                             # We need to adapt sync_resets_with_cloud to support generic provider
+                             # OR cast/check type if we haven't updated reset_helpers yet.
+                             # For this step, I'll pass the provider and let reset_helpers fail if not updated,
+                             # but I should update reset_helpers too.
+                             sync_resets_with_cloud(provider_for_sync)
+
+                    except Exception as e:
+                        cprint(NEON_RED, f"[WARN] Could not sync resets to cloud: {e}")
+                    
+                    # Also update the cooldown dashboard (gm-cooldown.json)
+                    record_switch(email_before, args=args)
+                # ------------------------------------------
+
+                email_after = get_active_session()
+                if email_before != email_after and email_after is not None:
+                    print(f"Account switch detected: -> {email_after}")
+                    print("Recording switch for 24h cooldown period...")
+                    # Pass args to handle potential cloud upload
+                    record_switch(email_after, args=args)
+
+        finally:
+            # cleanup temp extraction dir if still present
+            if os.path.exists(work_tmp):
+                try:
+                    shutil.rmtree(work_tmp)
+                except Exception:
+                    pass
+        # ADD THIS:
+        if temp_download_path and os.path.exists(temp_download_path):
+            try:
+                os.remove(temp_download_path)
+            except Exception:
+                pass
+    finally:
+        try:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            lockfd.close()
         except Exception:
             pass
 
-    import zlib
-    try:
-        with tarfile.open(archive_path, "r:gz") as tar:
-            member_name = archive_path.name.replace(".tar.gz", ".metadata.json")
-            try:
-                member = tar.getmember(member_name)
-            except KeyError as exc:
-                raise FileNotFoundError(
-                    f"Metadata file not found beside archive or inside archive: {member_name}"
-                ) from exc
-            extracted = tar.extractfile(member)
-            if extracted is None:
-                raise FileNotFoundError(f"Failed to extract metadata member: {member_name}")
-            return json.loads(extracted.read().decode("utf-8"))
-    except (zlib.error, tarfile.TarError) as exc:
-        raise RuntimeError(f"Could not read metadata from archive (possibly corrupted): {exc}") from exc
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--from-dir", help="Directory backup to restore from (legacy, archive is preferred)")
+    p.add_argument("--from-archive", help="Tar.gz archive to restore from")
+    p.add_argument("--email", help="Restore the latest backup for this email")
+    p.add_argument("--search-dir", default=DEFAULT_BACKUP_DIR, help="Directory to search for timestamped backups when no source is specified (default: ~/.gemini-manager/backups)")
+    p.add_argument("--dest", default=DEFAULT_GEMINI_HOME, help=f"Destination (default {DEFAULT_GEMINI_HOME})")
+    p.add_argument("--force", action="store_true", help="Allow destructive replace without keeping .bak")
+    p.add_argument("--dry-run", action="store_true", help="Do a dry run without destructive actions")
+    restore_mode = p.add_mutually_exclusive_group()
+    restore_mode.add_argument("--auth-only", action="store_true", help="Restore only Gemini identity files and preserve current sessions (default)")
+    restore_mode.add_argument("--full", action="store_true", help="Replace the whole Gemini state directory")
+    p.add_argument("--cloud", action="store_true", help="Restore from Cloud (B2)")
+    p.add_argument("--bucket", help="B2 Bucket Name")
+    p.add_argument("--b2-id", help="B2 Key ID (or set env GEMINI_B2_KEY_ID)")
+    p.add_argument("--b2-key", help="B2 App Key (or set env GEMINI_B2_APP_KEY)")
+    p.add_argument("--auto", action="store_true", help="Automatically restore the next best available account")
+    args = p.parse_args()
 
+    perform_restore(args)
 
-def validate_archive_contents(archive_path: Path) -> None:
-    with tarfile.open(archive_path, "r:gz") as tar:
-        names = set(tar.getnames())
-    if "auth.json" not in names:
-        raise ValueError(f"Archive does not contain auth.json: {archive_path}")
-
-
-def extract_archive_to_temp(archive_path: Path) -> Path:
-    temp_dir = Path(tempfile.mkdtemp(prefix="codex-manager-restore-"))
-    with tarfile.open(archive_path, "r:gz") as tar:
-        tar.extractall(temp_dir, filter="data")
-    return temp_dir
-
-
-def move_existing_target(dest_dir: Path) -> Path | None:
-    if not dest_dir.exists():
-        return None
-    
-    safety_dir = CODEX_MANAGER_HOME / "safety_backups"
-    safety_dir.mkdir(parents=True, exist_ok=True)
-    
-    backup_path = safety_dir / f"{dest_dir.name}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    shutil.move(str(dest_dir), str(backup_path))
-    return backup_path
-
-
-def install_restored_tree(extracted_dir: Path, dest_dir: Path) -> None:
-    # Use shutil.move because it handles cross-filesystem moves correctly.
-    # We move the entire tree from the temporary extraction point to the final destination.
-    if dest_dir.exists():
-        if dest_dir.is_dir():
-            shutil.rmtree(dest_dir)
-        else:
-            dest_dir.unlink()
-    
-    shutil.move(str(extracted_dir), str(dest_dir))
-
-
-def prune_metadata_file(extracted_dir: Path) -> None:
-    for path in extracted_dir.glob("*.metadata.json"):
-        path.unlink()
-
-
-def perform_restore(args) -> tuple[Path, Path, dict, Path | None]:
-    archive_path = resolve_archive_path(args)
-    metadata = load_metadata_for_archive(archive_path)
-    validate_archive_contents(archive_path)
-
-    dest_dir = Path(args.dest_dir).expanduser()
-    
-    auth_only = getattr(args, "auth_only", False)
-    
-    if auth_only:
-        if args.dry_run:
-            return archive_path, dest_dir, metadata, None
-        
-        # Ensure destination directory exists for auth-only extraction
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        # Swapping just auth-related files
-        from .backup import AUTH_ONLY_INCLUDES
-        
-        # Backup auth.json if it exists
-        auth_path = dest_dir / "auth.json"
-        existing_backup_path = None
-        if auth_path.exists():
-            safety_dir = CODEX_MANAGER_HOME / "safety_backups"
-            safety_dir.mkdir(parents=True, exist_ok=True)
-            current_email = getattr(args, "current_account_email", None) or identify_auth_email(auth_path)
-            email_label = _safe_backup_label(current_email) if current_email else "unknown"
-            existing_backup_path = safety_dir / (
-                f"auth.json.{email_label}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-            )
-            shutil.copy2(auth_path, existing_backup_path)
-        
-        with tarfile.open(archive_path, "r:gz") as tar:
-            for member in tar.getmembers():
-                if member.name in AUTH_ONLY_INCLUDES:
-                    tar.extract(member, path=dest_dir, filter="data")
-        return archive_path, dest_dir, metadata, existing_backup_path
-
-    extracted_dir = extract_archive_to_temp(archive_path)
-    prune_metadata_file(extracted_dir)
-
-    existing_backup_path: Path | None = None
-    if args.dry_run:
-        shutil.rmtree(extracted_dir)
-        return archive_path, dest_dir, metadata, existing_backup_path
-
-    if dest_dir.exists() and not args.force:
-        existing_backup_path = move_existing_target(dest_dir)
-    elif dest_dir.exists() and args.force:
-        shutil.rmtree(dest_dir)
-
-    dest_dir.parent.mkdir(parents=True, exist_ok=True)
-    install_restored_tree(extracted_dir, dest_dir)
-    return archive_path, dest_dir, metadata, existing_backup_path
-
-
-def restore_result_to_text(
-    archive_path: Path,
-    dest_dir: Path,
-    metadata: dict,
-    existing_backup_path: Path | None,
-    *,
-    dry_run: bool,
-) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'restored'}",
-        f"archive: {archive_path}",
-        f"destination: {dest_dir}",
-        f"email: {metadata.get('email', 'unknown')}",
-        f"session_start_at: {metadata.get('session_start_at', 'unknown')}",
-        f"reset_at: {metadata.get('reset_at', 'unknown')}",
-        f"quota_text: {metadata.get('quota_text', 'unknown')}",
-    ]
-    if existing_backup_path is not None:
-        lines.append(f"safety_backup: {existing_backup_path}")
-    return "\n".join(lines)
+if __name__ == "__main__":
+    main()

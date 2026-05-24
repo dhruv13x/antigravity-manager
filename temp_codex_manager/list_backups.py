@@ -1,297 +1,505 @@
+#!/usr/bin/env python3
+# src/gemini_manager/list_backups.py
+
+"""
+List Gemini Manager backups in a metadata-backed table.
+"""
 from __future__ import annotations
 
+import argparse
 import json
+import os
+import sys
 import tempfile
+import time
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Any
 
-from .cloud import B2Provider
-from .restore import load_metadata_for_archive
+from .b2 import B2Manager
+from .config import DEFAULT_BACKUP_DIR, OLD_CONFIGS_DIR
+from .credentials import resolve_credentials
+from .metadata import (
+    latest_entity_by_email,
+    load_local_snapshots,
+    load_local_states,
+    load_cloud_snapshots,
+    load_cloud_states,
+)
+from .restore import is_backup_archive, parse_timestamp_from_name
+from .ui import NEON_RED, NEON_YELLOW, Panel, Table, console, cprint, style_quota_percent
 
 
 @dataclass(frozen=True)
-class BackupEntry:
-    archive_path: Path
+class BackupRow:
+    archive_name: str
     email: str
-    session_start_at: str
+    captured_at: str
     reset_at: str
-    created_at: str
-    quota_percent_left: int | None
-    quota_text: str
+    flash: int | None
+    lite: int | None
+    pro: int | None
+    penalty: str
+    sort_key: float
     source: str = "local"
-    is_expired: bool = False
 
 
-def iter_backup_archives(backup_dir: Path) -> list[Path]:
-    if not backup_dir.exists():
-        raise FileNotFoundError(f"Backup directory does not exist: {backup_dir}")
-    
-    result = [
-        p for p in backup_dir.glob("*-codex.tar.gz")
-        if "-latest-codex.tar.gz" not in p.name
-    ]
-
-    return sorted(result, key=lambda path: path.name, reverse=True)
-
-
-def build_backup_entry(archive_path: Path) -> BackupEntry | None:
-    try:
-        # load_metadata_for_archive handles both archive-relative and standalone metadata
-        metadata = load_metadata_for_archive(archive_path)
-        
-        # If we were given a metadata file, try to find the archive buddy for the archive_path field
-        display_path = archive_path
-        if archive_path.name.endswith(".metadata.json"):
-            archive_buddy = archive_path.parent / (archive_path.name[:-14] + ".tar.gz")
-            if archive_buddy.exists():
-                display_path = archive_buddy
-
-        return BackupEntry(
-            archive_path=display_path,
-            email=metadata.get("email", "unknown"),
-            session_start_at=metadata.get("session_start_at", "unknown"),
-            reset_at=metadata.get("reset_at", "unknown"),
-            created_at=metadata.get("created_at", "unknown"),
-            quota_percent_left=metadata.get("quota_percent_left"),
-            quota_text=metadata.get("quota_text", "unknown"),
-            is_expired=metadata.get("is_expired", False),
-        )
-    except Exception as exc:
-        from .ui import console
-        console.print(f"[yellow]Warning:[/] Skipping corrupted record [dim]{archive_path.name}[/]: {exc}")
+def _email_from_archive_name(filename: str) -> str | None:
+    """
+    Extract the email address from a backup archive filename.
+    Expected formats:
+      YYYY-MM-DD_HHMMSS-email@example.com.gemini-manager.tar.gz
+      YYYY-MM-DD_HHMMSS-email@example.com.gemini-manager.tar.gz.gpg
+    Returns the email string if found, else None.
+    """
+    if len(filename) <= 18:
         return None
 
-def list_cloud_backups(
-    cloud: B2Provider,
-    *,
-    email: str | None = None,
-    latest_per_email: bool = False,
-    ready: bool = False,
-    sort_by: str = "created_at",
-) -> list[BackupEntry]:
-    cloud_files = cloud.list_files()
-    
-    # Map base names to their cloud files to handle orphans
-    base_to_files = {}
-    for f in cloud_files:
-        if f.name.endswith("-latest-codex.tar.gz"):
+    suffix = filename[18:]
+    if suffix.endswith(".gemini-manager.tar.gz"):
+        return suffix[:-22]
+    if suffix.endswith(".gemini-manager.tar.gz.gpg"):
+        return suffix[:-26]
+    return None
+
+
+def _timestamp_key(name: str) -> float:
+    """
+    Generate a numeric sort key from a filename's timestamp prefix.
+    Expects prefix: YYYY-MM-DD_HHMMSS
+    """
+    parsed = parse_timestamp_from_name(name)
+    if not parsed:
+        return 0
+    return time.mktime(parsed)
+
+
+def _display_archive(name: str) -> str:
+    """
+    Format the archive filename for display in the table.
+    Shortens '2026-05-13_120000' to '05-13_120000' for better fit in narrow terminals.
+    """
+    parsed = parse_timestamp_from_name(name)
+    if parsed:
+        return time.strftime("%m-%d_%H%M%S", parsed)
+    return name
+
+
+def _metadata_time_key(record: dict[str, Any], archive_name: str = "") -> float:
+    """
+    Extract a timestamp from a metadata record for sorting or comparison.
+    Priority: updated_at > captured_at > saved_at > created_at > reset_at > reset_ist
+    """
+    for field in ("updated_at", "captured_at", "saved_at", "created_at", "reset_at", "reset_ist"):
+        value = record.get(field)
+        if not value:
+            continue
+        try:
+            from datetime import datetime
+
+            return datetime.fromisoformat(str(value)).timestamp()
+        except Exception:
+            pass
+    return _timestamp_key(archive_name)
+
+
+def _model_percent(models: dict[str, Any], wanted: str) -> int | None:
+    wanted_key = wanted.lower().replace(" ", "")
+    for name, info in (models or {}).items():
+        normalized = str(name).lower().replace(" ", "")
+        if wanted_key not in normalized:
             continue
         
-        if f.name.endswith(".tar.gz"):
-            base = f.name[:-7]
-            base_to_files.setdefault(base, {})["archive"] = f
-        elif f.name.endswith(".metadata.json"):
-            base = f.name[:-14]
-            base_to_files.setdefault(base, {})["metadata"] = f
+        info = info or {}
+        # Standardize to USAGE percentage
+        if "percent_used" in info:
+            try:
+                return int(info["percent_used"])
+            except (TypeError, ValueError):
+                pass
+        if "percent_left" in info:
+            try:
+                return 100 - int(info["percent_left"])
+            except (TypeError, ValueError):
+                pass
+        if "remaining_percent" in info:
+            try:
+                return 100 - int(info["remaining_percent"])
+            except (TypeError, ValueError):
+                pass
 
-    entries = []
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        for base, files in base_to_files.items():
-            metadata_file = files.get("metadata")
-            archive_file = files.get("archive")
-            
-            if not archive_file:
-                continue
+        # Default to 'percent', treating it as Usage (matches Gemini CLI behavior)
+        percent = info.get("percent")
+        
+        try:
+            return int(percent)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _quota_text(row: BackupRow) -> str:
+    return f"F:{style_quota_percent(row.flash, is_usage=True)} L:{style_quota_percent(row.lite, is_usage=True)} P:{style_quota_percent(row.pro, is_usage=True)}"
+
+
+def _penalty_for_flash(usage: int | None) -> str:
+    """
+    Calculate penalty based on Flash usage.
+    """
+    if usage is None:
+        return "[dim]UNKNOWN[/]"
+    
+    if usage >= 100:
+        return "[red]HIGH[/]"
+    if usage >= 90:
+        return "[bright_red]HEAVY[/]"
+    if usage >= 65:
+        return "[yellow]MEDIUM[/]"
+    return "[green]LOW[/]"
+
+
+def _row_from_metadata(record: dict[str, Any], archive_name: str, source: str) -> BackupRow:
+    models = record.get("models") or {}
+    flash = _model_percent(models, "flash")
+    lite = _model_percent(models, "lite")
+    pro = _model_percent(models, "pro")
+    email = str(record.get("email") or _email_from_archive_name(archive_name) or "unknown")
+    captured_at = str(record.get("captured_at") or record.get("created_at") or record.get("saved_at") or "unknown")
+    reset_at = str(record.get("next_available_at") or record.get("reset_at") or record.get("reset_ist") or "unknown")
+    return BackupRow(
+        archive_name=archive_name,
+        email=email,
+        captured_at=captured_at,
+        reset_at=reset_at,
+        flash=flash,
+        lite=lite,
+        pro=pro,
+        penalty=_penalty_for_flash(flash),
+        sort_key=_timestamp_key(archive_name) or _metadata_time_key(record, archive_name),
+        source=source,
+    )
+
+
+def _row_from_archive_name(archive_name: str, source: str) -> BackupRow:
+    email = _email_from_archive_name(archive_name) or "unknown"
+    return BackupRow(
+        archive_name=archive_name,
+        email=email,
+        captured_at="unknown",
+        reset_at="unknown",
+        flash=None,
+        lite=None,
+        pro=None,
+        penalty=_penalty_for_flash(None),
+        sort_key=_timestamp_key(archive_name),
+        source=source,
+    )
+
+
+def _latest_per_email(rows: list[BackupRow]) -> list[BackupRow]:
+    latest: dict[str, BackupRow] = {}
+    for row in sorted(rows, key=lambda item: item.sort_key, reverse=True):
+        key = row.email.lower()
+        if key not in latest:
+            latest[key] = row
+    return list(latest.values())
+
+
+def _sort_rows(rows: list[BackupRow], latest_only: bool) -> list[BackupRow]:
+    if latest_only:
+        rows = _latest_per_email(rows)
+    return sorted(rows, key=lambda item: item.sort_key, reverse=True)
+
+
+def _local_rows(search_dir: str) -> list[BackupRow]:
+    archive_dir = os.path.abspath(os.path.expanduser(search_dir or DEFAULT_BACKUP_DIR))
+    if not os.path.isdir(archive_dir):
+        cprint(NEON_YELLOW, f"Archive backup directory not found: {archive_dir}")
+        return []
+
+    try:
+        names = sorted(os.listdir(archive_dir))
+    except OSError as exc:
+        cprint(NEON_RED, f"Error reading archive backup directory: {exc}")
+        return []
+
+    archives = [
+        name
+        for name in names
+        if os.path.isfile(os.path.join(archive_dir, name)) and is_backup_archive(name)
+    ]
+    
+    # Pre-calculate latest archive per email
+    latest_archives = {}
+    for name in archives:
+        email = _email_from_archive_name(name)
+        if not email: continue
+        key = email.lower()
+        ts = _timestamp_key(name)
+        if key not in latest_archives or ts > _timestamp_key(latest_archives[key]):
+            latest_archives[key] = name
+
+    # 1. Load authoritative snapshots
+    snapshots = load_local_snapshots(archive_dir)
+    
+    # 2. Load Registry (The high-performance index)
+    from .registry import get_registry
+    registry_records = get_registry().get_all()
+    
+    # 3. Load decentralized states
+    states = load_local_states()
+    
+    # Merge entries from the global resets store (used by gm cooldown)
+    # as a fallback when specific archival information is missing.
+    from .reset_helpers import get_all_resets
+    all_records = list(snapshots)
+    all_records.extend(registry_records) # Prioritize registry for composition
+    all_records.extend(states)
+    all_records.extend(get_all_resets())
+
+    metadata_by_archive = {
+        record.get("archive_name"): record
+        for record in snapshots
+        if record.get("archive_name")
+    }
+    
+    # Index by email for fallbacks
+    metadata_by_account: dict[str, dict[str, Any]] = {
+        record["email"].lower(): record
+        for record in (registry_records + states) # Use Registry or State
+        if record.get("email")
+    }
+
+    from .metadata import ENTITY_PRIORITY
+    metadata_by_email = latest_entity_by_email(all_records)
+
+    rows = []
+    for archive_name in archives:
+        email = _email_from_archive_name(archive_name)
+        
+        # Default to archive-specific record
+        record = metadata_by_archive.get(archive_name)
+        
+        # If this is the LATEST archive for this email, 
+        # attempt to use the most authoritative account health (Registry/State/Reset)
+        if email and archive_name == latest_archives.get(email.lower()):
+            latest_rec = metadata_by_email.get(email.lower())
+            if latest_rec:
+                # Only upgrade to latest_rec if it's more authoritative or newer than the archive snapshot
+                rec_type = latest_rec.get("_entity_type", "reset")
+                rec_prio = ENTITY_PRIORITY.get(rec_type, 0)
                 
-            archive_name = archive_file.name
+                # archive snapshot prio is effectively 200 (SnapshotRecord)
+                if rec_prio > 200 or _metadata_time_key(latest_rec) > _timestamp_key(archive_name):
+                    record = latest_rec
+        
+        if not record and email:
+            # Fallback 1: Registry or Mutable Account State
+            record = metadata_by_account.get(email.lower())
+        
+        if not record and email:
+            # Fallback 2: Latest general record (snapshot or reset)
+            record = metadata_by_email.get(email.lower())
             
-            if metadata_file:
-                local_mf = tmp_path / metadata_file.name
-                try:
-                    cloud.download_file(metadata_file.name, local_mf)
-                    metadata = json.loads(local_mf.read_text())
-                    entries.append(BackupEntry(
-                        archive_path=Path(metadata.get("archive_name", archive_name)),
-                        email=metadata.get("email", "unknown"),
-                        session_start_at=metadata.get("session_start_at", "unknown"),
-                        reset_at=metadata.get("reset_at", "unknown"),
-                        created_at=metadata.get("created_at", "unknown"),
-                        quota_percent_left=metadata.get("quota_percent_left"),
-                        quota_text=metadata.get("quota_text", "unknown"),
-                        source="cloud",
-                        is_expired=metadata.get("is_expired", False),
-                    ))
-                except Exception:
-                    # Fallback if metadata download/parse fails
-                    parts = base.split("-")
-                    extracted_email = "unknown"
-                    if len(parts) >= 5 and base.endswith("-codex"):
-                        extracted_email = "-".join(parts[4:-1])
-                    entries.append(BackupEntry(
-                        archive_path=Path(archive_name),
-                        email=extracted_email,
-                        session_start_at="unknown",
-                        reset_at="unknown",
-                        created_at="-".join(parts[:4]) if len(parts) >= 4 else "unknown",
-                        quota_percent_left=None,
-                        quota_text="unknown",
-                        source="cloud",
-                        is_expired=False,
-                    ))
-            elif archive_file:
-                # ORPHAN ARCHIVE: Extract details from filename
-                parts = base.split("-")
-                extracted_email = "unknown"
-                if len(parts) >= 5 and base.endswith("-codex"):
-                    extracted_email = "-".join(parts[4:-1])
-                entries.append(BackupEntry(
-                    archive_path=Path(archive_name),
-                    email=extracted_email,
-                    session_start_at="unknown",
-                    reset_at="unknown",
-                    created_at="-".join(parts[:4]) if len(parts) >= 4 else "unknown",
-                    quota_percent_left=None,
-                    quota_text="unknown",
-                    source="cloud",
-                    is_expired=False,
-                ))
-
-    if email is not None:
-        entries = [entry for entry in entries if entry.email == email]
-
-    if ready:
-        from datetime import datetime
-        now = datetime.now().astimezone()
-        def is_ready(entry: BackupEntry) -> bool:
-            if not entry.reset_at or str(entry.reset_at).lower() in ("unknown", "none"):
-                return False
-            try:
-                reset_time = datetime.fromisoformat(str(entry.reset_at))
-                return reset_time <= now
-            except ValueError:
-                return False
-        entries = [e for e in entries if is_ready(e)]
-
-    if sort_by == "reset_at":
-        entries.sort(key=lambda e: e.reset_at, reverse=True)
-    elif sort_by == "session_start_at":
-        entries.sort(key=lambda e: e.session_start_at, reverse=True)
-    else:
-        entries.sort(key=lambda e: e.created_at, reverse=True)
-
-    if latest_per_email:
-        seen = set()
-        filtered = []
-        for e in entries:
-            if e.email not in seen:
-                seen.add(e.email)
-                filtered.append(e)
-        entries = filtered
-
-    return entries
+        if record:
+            rows.append(_row_from_metadata(record, archive_name, "local"))
+        else:
+            rows.append(_row_from_archive_name(archive_name, "local"))
+    return rows
 
 
-def list_backups(
-    backup_dir: Path,
-    *,
-    email: str | None = None,
-    latest_per_email: bool = False,
-    ready: bool = False,
-    sort_by: str = "created_at",
-) -> list[BackupEntry]:
-    raw_entries = [build_backup_entry(path) for path in iter_backup_archives(backup_dir)]
-    entries = [e for e in raw_entries if e is not None]
-    if email is not None:
-        entries = [entry for entry in entries if entry.email == email]
+def _cloud_rows(args: argparse.Namespace) -> list[BackupRow]:
+    key_id, app_key, bucket_name = resolve_credentials(args)
+    b2 = B2Manager(key_id, app_key, bucket_name)
 
-    if ready:
-        from datetime import datetime
+    try:
+        listed = list(b2.list_files()) # Returns List[CloudFile]
+    except Exception as exc:
+        cprint(NEON_RED, f"[CLOUD] Failed to list backups from B2: {exc}")
+        sys.exit(1)
 
-        import codex_manager.list_backups  # For mocking
-        now = getattr(codex_manager.list_backups, "datetime", datetime).now().astimezone()
-        def is_ready(entry: BackupEntry) -> bool:
-            if not entry.reset_at or str(entry.reset_at).lower() in ("unknown", "none"):
-                return False
-            try:
-                dt = getattr(codex_manager.list_backups, "datetime", datetime)
-                reset_time = dt.fromisoformat(str(entry.reset_at))
-                return reset_time <= now
-            except ValueError:
-                return False
-        entries = [e for e in entries if is_ready(e)]
+    names = [f.name for f in listed]
+    archives = [name for name in names if is_backup_archive(name)]
+    
+    # Pre-calculate latest archive per email
+    latest_archives = {}
+    for name in archives:
+        email = _email_from_archive_name(name)
+        if not email: continue
+        key = email.lower()
+        ts = _timestamp_key(name)
+        if key not in latest_archives or ts > _timestamp_key(latest_archives[key]):
+            latest_archives[key] = name
 
-    if sort_by == "reset_at":
-        entries.sort(key=lambda e: e.reset_at, reverse=True)
-    elif sort_by == "session_start_at":
-        entries.sort(key=lambda e: e.session_start_at, reverse=True)
-    else:
-        entries.sort(key=lambda e: e.created_at, reverse=True)
+    # 1. Sync Registry from cloud (The primary health source)
+    from .registry import sync_registry_with_cloud, get_registry
+    try:
+        sync_registry_with_cloud(b2, direction="pull")
+    except Exception:
+        pass
+    
+    registry_records = get_registry().get_all()
+    
+    # 2. Namespace Peeking: Extract identity and reset time from filenames
+    # This provides a near-zero cost initial view.
+    peeking_records = []
+    for archive_name in archives:
+        email = _email_from_archive_name(archive_name)
+        # We use parse_timestamp_from_name to get the 'reset_at' encoded in filename
+        reset_ts = parse_timestamp_from_name(archive_name)
+        if email and reset_ts:
+            peeking_records.append({
+                "email": email,
+                "reset_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", reset_ts),
+                "next_available_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", reset_ts),
+                "archive_name": archive_name,
+                "_entity_type": "snapshot",
+                "status_source": "namespace_peeking"
+            })
 
-    if latest_per_email:
-        seen = set()
-        filtered = []
-        for e in entries:
-            if e.email not in seen:
-                seen.add(e.email)
-                filtered.append(e)
-        entries = filtered
+    metadata_by_archive: dict[str, dict[str, Any]] = {
+        record.get("archive_name"): record
+        for record in peeking_records
+    }
+    
+    metadata_by_account: dict[str, dict[str, Any]] = {
+        record["email"].lower(): record
+        for record in registry_records
+        if record.get("email")
+    }
 
-    return entries
+    # Compose all cloud-sourced records
+    all_cloud_records = list(peeking_records)
+    all_cloud_records.extend(registry_records)
+
+    # Pull in the remote resets store if available
+    try:
+        remote_resets = b2.download_to_string("gm-resets.json")
+        if remote_resets:
+            resets_data = json.loads(remote_resets)
+            if isinstance(resets_data, list):
+                all_cloud_records.extend(resets_data)
+    except Exception:
+        pass
+
+    from .metadata import ENTITY_PRIORITY
+    metadata_by_email = latest_entity_by_email(all_cloud_records)
+
+    rows = []
+    for archive_name in archives:
+        email = _email_from_archive_name(archive_name)
+        
+        # Start with archive-specific peeking
+        record = metadata_by_archive.get(archive_name)
+        
+        # If this is the LATEST archive for this email, prefer the most authoritative cloud record
+        if email and archive_name == latest_archives.get(email.lower()):
+            latest_rec = metadata_by_email.get(email.lower())
+            if latest_rec:
+                # Use latest_rec if it's more authoritative or newer than filename peeking
+                rec_type = latest_rec.get("_entity_type", "reset")
+                rec_prio = ENTITY_PRIORITY.get(rec_type, 0)
+                
+                # peeking is priority 200 (snapshot) but lacks model info
+                if rec_prio > 200 or latest_rec.get("models") or _metadata_time_key(latest_rec) > _timestamp_key(archive_name):
+                    record = latest_rec
+
+        if not record and email:
+            # Fallback 1: Registry
+            record = metadata_by_account.get(email.lower())
+
+        if not record and email:
+            # Fallback 2: Latest general record (Cloud)
+            record = metadata_by_email.get(email.lower())
+
+        if record:
+            rows.append(_row_from_metadata(record, archive_name, "cloud"))
+        else:
+            rows.append(_row_from_archive_name(archive_name, "cloud"))
+    return rows
 
 
-def print_entries_table(entries: list[BackupEntry]) -> None:
-    from .ui import Panel, Table, console
+def _print_rows(rows: list[BackupRow], *, latest_only: bool, source: str) -> None:
+    if not rows:
+        console.print(f"[yellow]No backup archives found ({source}).[/]")
+        return
+
+    rows = _sort_rows(rows, latest_only=latest_only)
 
     table = Table(show_header=True, header_style="bold bright_magenta")
-    table.add_column("Archive", style="bright_cyan")
-    table.add_column("Email", style="bright_green")
-    table.add_column("Session Start", justify="right", style="dim")
-    table.add_column("Reset At", justify="right", style="dim")
-    table.add_column("Quota", justify="right", style="bright_yellow")
+    table.add_column("Backup", style="bright_cyan", no_wrap=True)
+    table.add_column("Email", style="bright_green", no_wrap=True)
+    table.add_column("Quota", no_wrap=True)
+    table.add_column("Penalty", justify="center")
 
-    for entry in entries:
-        quota = (
-            f"{entry.quota_percent_left}%"
-            if entry.quota_percent_left is not None
-            else "unknown"
-        )
-        archive_name = entry.archive_path.name if hasattr(entry, "archive_path") else getattr(entry, "proposed_archive_name", getattr(entry, "archive_name", "unknown"))
-        table.add_row(
-            archive_name,
-            entry.email,
-            str(entry.session_start_at),
-            str(entry.reset_at),
-            quota,
-        )
-
-    console.print(Panel(table, title="[bold bright_cyan]Available Backups[/]", border_style="bright_cyan", expand=False))
-
-
-def entries_to_table(entries: list[BackupEntry]) -> str:
-    # For backward compatibility, generate table and render to string for tests.
-    headers = [
-        "Archive",
-        "Email",
-        "Session Start",
-        "Reset At",
-        "Quota",
-    ]
-    rows = []
-    for entry in entries:
-        quota = (
-            f"{entry.quota_percent_left}%"
-            if entry.quota_percent_left is not None
-            else "unknown"
-        )
-        rows.append(
-            [
-                entry.archive_path.name if hasattr(entry, "archive_path") else getattr(entry, "proposed_archive_name", getattr(entry, "archive_name", "unknown")),
-                entry.email,
-                entry.session_start_at,
-                entry.reset_at,
-                quota,
-            ]
-        )
-
-    widths = [len(header) for header in headers]
     for row in rows:
-        for index, cell in enumerate(row):
-            widths[index] = max(widths[index], len(str(cell)))
+        table.add_row(
+            _display_archive(row.archive_name),
+            row.email,
+            _quota_text(row),
+            row.penalty,
+        )
 
-    def format_row(values: list[str]) -> str:
-        return "  ".join(str(value).ljust(widths[index]) for index, value in enumerate(values))
+    mode = "latest per email" if latest_only else "all archives"
+    console.print(
+        Panel(
+            table,
+            title=f"[bold bright_cyan]Available Backups ({source}, {mode})[/]",
+            border_style="bright_cyan",
+            expand=False,
+        )
+    )
 
-    lines = [format_row(headers), format_row(["-" * width for width in widths])]
-    lines.extend(format_row(row) for row in rows)
-    return "\n".join(lines)
+
+def _print_directory_backups() -> None:
+    dir_backup_path = os.path.expanduser(OLD_CONFIGS_DIR)
+    if not os.path.isdir(dir_backup_path):
+        cprint(NEON_YELLOW, f"Directory backup path not found: {dir_backup_path}")
+        return
+
+    try:
+        dir_backups = [
+            name
+            for name in os.listdir(dir_backup_path)
+            if os.path.isdir(os.path.join(dir_backup_path, name)) and ".gm" in name
+        ]
+    except OSError as exc:
+        cprint(NEON_RED, f"Error reading directory backup path: {exc}")
+        return
+
+    if not dir_backups:
+        cprint(NEON_YELLOW, f"No directory backups found in {dir_backup_path}")
+        return
+
+    table = Table(show_header=True, header_style="bold bright_magenta")
+    table.add_column("Directory Backup", style="bright_cyan")
+    for backup in sorted(dir_backups):
+        table.add_row(backup)
+    console.print(Panel(table, title="[bold yellow]Old Directory Backups[/]", border_style="yellow", expand=False))
+
+
+def perform_list_backups(args: argparse.Namespace):
+    latest_only = not bool(getattr(args, "all", False))
+    if getattr(args, "cloud", False):
+        _print_rows(_cloud_rows(args), latest_only=latest_only, source="cloud")
+    else:
+        _print_rows(_local_rows(getattr(args, "search_dir", DEFAULT_BACKUP_DIR)), latest_only=latest_only, source="local")
+        if getattr(args, "show_dirs", False):
+            _print_directory_backups()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="List available Gemini backups.")
+    parser.add_argument("--search-dir", default=DEFAULT_BACKUP_DIR, help=f"Directory to search for archive backups (default {DEFAULT_BACKUP_DIR})")
+    parser.add_argument("--all", action="store_true", help="Show every archive instead of only the latest backup per email")
+    parser.add_argument("--show-dirs", action="store_true", help="Also show legacy directory backups from ~/.gemini-manager-old")
+    parser.add_argument("--cloud", action="store_true", help="List backups from Cloud (B2)")
+    parser.add_argument("--bucket", help="B2 Bucket Name")
+    parser.add_argument("--b2-id", help="B2 Key ID (or set env GEMINI_B2_KEY_ID)")
+    parser.add_argument("--b2-key", help="B2 App Key (or set env GEMINI_B2_APP_KEY)")
+    args = parser.parse_args()
+
+    perform_list_backups(args)
+
+
+if __name__ == "__main__":
+    main()

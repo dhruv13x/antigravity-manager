@@ -1,3 +1,2 @@
-__all__ = ["__version__"]
+# src/gemini_manager/__init__.py
 
-__version__ = "18.0.0"

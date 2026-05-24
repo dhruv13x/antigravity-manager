@@ -5,6 +5,7 @@ src/antigravity_manager/backup.py
 src/antigravity_manager/cli.py
 src/antigravity_manager/config.py
 src/antigravity_manager/cooldown.py
+src/antigravity_manager/credentials.py
 src/antigravity_manager/doctor.py
 src/antigravity_manager/list_backups.py
 src/antigravity_manager/profile.py
@@ -15,6 +16,7 @@ src/antigravity_manager/registry.py
 src/antigravity_manager/remove.py
 src/antigravity_manager/restore.py
 src/antigravity_manager/status.py
+src/antigravity_manager/sync.py
 src/antigravity_manager/ui.py
 src/antigravity_manager/utils.py
 src/antigravity_manager.egg-info/PKG-INFO
@@ -25,5 +27,21 @@ src/antigravity_manager.egg-info/requires.txt
 src/antigravity_manager.egg-info/top_level.txt
 tests/test_backup_restore.py
 tests/test_cli.py
+tests/test_cli_commands.py
 tests/test_cooldown.py
+tests/test_cooldown2.py
+tests/test_doctor.py
+tests/test_doctor_2.py
+tests/test_list_backups.py
+tests/test_profile.py
+tests/test_prune.py
+tests/test_prune_backups.py
+tests/test_purge.py
+tests/test_registry.py
+tests/test_remove.py
 tests/test_status.py
+tests/test_status_2.py
+tests/test_status_3.py
+tests/test_status_4.py
+tests/test_sync.py
+tests/test_utils.py

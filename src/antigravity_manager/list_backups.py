@@ -21,7 +21,12 @@ class BackupEntry:
 
 
 def metadata_path_for_archive(archive_path: Path) -> Path:
-    return archive_path.with_name(archive_path.name.replace(".tar.gz", ".metadata.json"))
+    # email-timestamp-antigravity.tar.gz -> email-timestamp-antigravity.metadata.json
+    # email-timestamp-antigravity.tar.gz.gpg -> email-timestamp-antigravity.metadata.json
+    name = archive_path.name.replace(".tar.gz.gpg", ".metadata.json").replace(
+        ".tar.gz", ".metadata.json"
+    )
+    return archive_path.with_name(name)
 
 
 def load_metadata_for_archive(archive_path: Path) -> dict[str, Any]:
@@ -29,13 +34,17 @@ def load_metadata_for_archive(archive_path: Path) -> dict[str, Any]:
     if metadata_path.exists():
         return dict(json.loads(metadata_path.read_text(encoding="utf-8")))
 
-    member_name = archive_path.name.replace(".tar.gz", ".metadata.json")
-    with tarfile.open(archive_path, "r:gz") as tar:
-        member = tar.getmember(member_name)
-        extracted = tar.extractfile(member)
-        if extracted is None:
-            raise FileNotFoundError(f"Metadata member could not be read: {member_name}")
-        return dict(json.loads(extracted.read().decode("utf-8")))
+    # Fallback to internal metadata for unencrypted archives
+    if archive_path.suffix != ".gpg":
+        member_name = archive_path.name.replace(".tar.gz", ".metadata.json")
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member = tar.getmember(member_name)
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                raise FileNotFoundError(f"Metadata member could not be read: {member_name}")
+            return dict(json.loads(extracted.read().decode("utf-8")))
+
+    raise FileNotFoundError(f"External metadata missing for encrypted archive: {archive_path}")
 
 
 def build_backup_entry(archive_path: Path) -> BackupEntry | None:
@@ -60,12 +69,11 @@ def build_backup_entry(archive_path: Path) -> BackupEntry | None:
 def iter_backup_archives(backup_dir: Path) -> list[Path]:
     if not backup_dir.exists():
         return []
+    archives = list(backup_dir.glob("*-antigravity.tar.gz")) + list(
+        backup_dir.glob("*-antigravity.tar.gz.gpg")
+    )
     return sorted(
-        [
-            path
-            for path in backup_dir.glob("*-antigravity.tar.gz")
-            if "-latest-antigravity.tar.gz" not in path.name
-        ],
+        [path for path in archives if "-latest-antigravity.tar.gz" not in path.name],
         key=lambda path: path.name,
         reverse=True,
     )

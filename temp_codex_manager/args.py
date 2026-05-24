@@ -1,760 +1,259 @@
-from __future__ import annotations
+#!/usr/bin/env python3
+# src/gemini_manager/args.py
 
 import argparse
 import sys
-from . import __version__
-
+from rich.table import Table
+from rich.panel import Panel
+from .ui import console, print_rich_help
 from .config import (
     DEFAULT_BACKUP_DIR,
-    DEFAULT_CODEX_HOME,
-    DEFAULT_COOLDOWN_DISPLAY_LIMIT,
-    load_config,
+    OLD_CONFIGS_DIR,
+    DEFAULT_GEMINI_HOME
 )
-from .ui import Panel, Table, console
-
+from .project_config import load_project_config, normalize_config_keys
 
 class RichHelpParser(argparse.ArgumentParser):
-    """Custom parser that overrides print_help to display a Rich-based help screen."""
-
+    """
+    Custom parser that overrides print_help to display a Rich-based help screen
+    for subcommands (and the main command if accessed via standard flow).
+    """
     def error(self, message):
-        console.print(f"[bold red]Error:[/ ] {message}", stderr=True)
-        console.print("[dim]Use --help for usage information.[/]", stderr=True)
+        console.print(f"[bold red]Error:[/ {message}")
+        # Only print full help if really needed, or just hint
+        console.print("[dim]Use --help for usage information.[/]")
         sys.exit(2)
 
     def print_help(self, file=None):
-        # Header
-        console.print(Panel("[bold bright_cyan]Codex Manager[/]\n[italic bright_green]Account snapshot and quota manager for OpenAI Codex[/]", expand=False, border_style="bright_cyan"))
-        
-        console.print(f"\n[bold bright_white]Usage:[/ ] [dim]{self.format_usage().strip().replace('usage: ', '')}[/]")
+        """
+        Dynamically generates Rich help for ANY parser (main or subcommand).
+        """
+        # If this is the main parser (checking by prog name usually, or description),
+        # we might want to use the specialized print_rich_help() for the fancy banner.
+        # However, implementing a generic one is better for subcommands.
 
+        if self.description and "Gemini AI Automation Tool" in self.description:
+             # This is likely the main parser
+             print_rich_help()
+             return
+
+        # For Subcommands (e.g., 'gm backup')
+        console.print(f"[bold cyan]Command:[/ ] [bold magenta]{self.prog}[/]\n")
         if self.description:
-            console.print(f"\n[italic bright_white]{self.description}[/]")
+            console.print(f"[italic]{self.description}[/]\n")
 
-        # Subcommands or Arguments
-        # We can detect if we have subparsers
-        subparsers_actions = [
-            action for action in self._actions 
-            if isinstance(action, argparse._SubParsersAction)
-        ]
-        
-        if subparsers_actions:
-            console.print("\n[bold bright_magenta]Available Commands:[/ ]")
-            table = Table(show_header=False, box=None, padding=(0, 2))
-            for action in subparsers_actions:
-                # _SubParsersAction stores choices in a dict where values are the parsers
-                for choice, subparser in action.choices.items():
-                    # The help for the choice is stored in the subparser's description or a special attribute
-                    help_text = getattr(subparser, 'help', '')
-                    if not help_text:
-                        # Search for the action that created this choice
-                        for sp_action in action._choices_actions:
-                            if sp_action.dest == choice:
-                                help_text = sp_action.help
-                                break
-                    table.add_row(f"[bold bright_green]{choice}[/]", f"[dim]{help_text}[/]")
-            console.print(table)
-        
-        # Regular arguments
-        action_groups = [
-            group for group in self._action_groups 
-            if group.title != 'positional arguments' or not subparsers_actions
-        ]
+        # Usage
+        console.print(f"[bold white]Usage:[/ ] [dim]{self.format_usage().strip().replace('usage: ', '')}[/]\n")
 
-        for group in action_groups:
-            if not group._group_actions:
-                continue
-            
-            # Skip empty or boring groups
-            if group.title == "options" and len(group._group_actions) <= 1: # just help
-                continue
+        # Arguments
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Option", style="bold yellow", width=30)
+        table.add_column("Description", style="white")
 
-            console.print(f"\n[bold bright_yellow]{group.title.capitalize()}:[/ ]")
-            table = Table(show_header=False, box=None, padding=(0, 2))
-            for action in group._group_actions:
-                opts = ", ".join(action.option_strings) if action.option_strings else action.dest
-                help_text = action.help if action.help else ""
-                # Replace default values in help text for better look
-                if action.default and action.default != argparse.SUPPRESS and "[default:" not in help_text:
-                    # Only add if it's a simple type
-                    if isinstance(action.default, (str, int, float, bool)):
-                         help_text += f" [dim](default: {action.default})[/]"
+        for action in self._actions:
+            # Skip help if we want, but usually good to show
+            opts = ", ".join(action.option_strings)
+            if not opts:
+                opts = action.dest # Positional arg
 
-                table.add_row(f"[bold bright_cyan]{opts}[/]", f"[white]{help_text}[/]")
-            console.print(table)
+            help_text = action.help or ""
+            # Handle default values
+            if action.default != argparse.SUPPRESS and action.default is not None:
+                # help_text += f" [dim](default: {action.default})[/]"
+                pass # argparse puts default in help usually, check formatting
 
-        console.print("\n[dim]Run 'cm <command> --help' for more information on a specific command.[/]")
+            table.add_row(opts, help_text)
+
+        console.print(Panel(table, title="[bold green]Arguments & Options[/]", border_style="cyan"))
 
 def get_parser() -> argparse.ArgumentParser:
-    config = load_config()
+    """
+    Builds and returns the argument parser.
+    """
+    # Use RichHelpParser for the main parser
+    parser = RichHelpParser(description="Gemini AI Automation Tool", add_help=False)
 
-    def _get_default(key: str, fallback: str | int | float | bool | None) -> str | int | float | bool | None:
-        return config.get(key, fallback)
+    # 0. Check for --profile in args manually before full parsing
+    profile = None
+    if "--profile" in sys.argv:
+        try:
+            idx = sys.argv.index("--profile")
+            if idx + 1 < len(sys.argv):
+                profile = sys.argv[idx + 1]
+        except ValueError:
+            pass
 
-    parser = RichHelpParser(prog="codex-manager", description="Manage your Codex account snapshots and quotas.")
-    parser.add_argument(
-        "--version",
-        "-v",
-        action="version",
-        version=f"%(prog)s {__version__}",
-    )
-    subparsers = parser.add_subparsers(dest="command")
+    # Load project config (pyproject.toml / gemini-manager.toml)
+    project_defaults = load_project_config(profile=profile)
+    if project_defaults:
+        # Normalize keys (kebab-case -> snake_case)
+        project_defaults = normalize_config_keys(project_defaults)
+        parser.set_defaults(**project_defaults)
 
-    cooldown_parser = subparsers.add_parser(
-        "cooldown",
-        help="Show weekly availability from backup metadata.",
-    )
-    cooldown_parser.add_argument(
-        "--backup-dir",
-        default=str(DEFAULT_BACKUP_DIR),
-        help="Directory containing backup archives and metadata.",
-    )
-    cooldown_parser.add_argument(
-        "--limit",
-        type=int,
-        default=DEFAULT_COOLDOWN_DISPLAY_LIMIT,
-        help="Maximum number of accounts to display.",
-    )
-    cooldown_parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="Query availability from Cloud (B2) metadata.",
-    )
-    cooldown_parser.add_argument("--bucket", help="B2 Bucket Name")
-    cooldown_parser.add_argument("--b2-id", help="B2 Key ID")
-    cooldown_parser.add_argument("--b2-key", help="B2 App Key")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands", parser_class=RichHelpParser)
 
-    recommend_parser = subparsers.add_parser(
-        "recommend",
-        help="Recommend the best account to use next from backup metadata.",
-    )
-    recommend_parser.add_argument(
-        "--backup-dir",
-        default=str(DEFAULT_BACKUP_DIR),
-        help="Directory containing backup archives and metadata.",
-    )
-    recommend_parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="Recommend from Cloud (B2) metadata.",
-    )
-    recommend_parser.add_argument(
-        "--use",
-        action="store_true",
-        help="Immediately switch to the recommended account (fast auth-only switch).",
-    )
-    recommend_parser.add_argument(
-        "--restore",
-        action="store_true",
-        help="Immediately restore the recommended account's full backup.",
-    )
-    recommend_parser.add_argument(
-        "--dest-dir",
-        default=str(_get_default("codex_home", str(DEFAULT_CODEX_HOME))),
-        help="Codex home directory to restore into when used with --use or --restore.",
-    )
-    recommend_parser.add_argument(
-        "--without-status-check",
-        action="store_true",
-        help="Skip current account status capture before switching when used with --use or --restore.",
-    )
-    recommend_parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="Prune runtime state and then do a full restore for a clean start when used with --use (implied by --restore).",
-    )
-    recommend_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would happen without switching when used with --use or --restore.",
-    )
-    recommend_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Reserved for future full-restore switching behavior; auth-only switching does not replace the whole destination.",
-    )
-    recommend_parser.add_argument("--bucket", help="B2 Bucket Name")
-    recommend_parser.add_argument("--b2-id", help="B2 Key ID")
-    recommend_parser.add_argument("--b2-key", help="B2 App Key")
+    # Keep existing top-level arguments
+    parser.add_argument("--session", action="store_true", help="Show current active session")
+    parser.add_argument("--update", action="store_true", help="Reinstall / update Gemini CLI")
+    parser.add_argument("--check-update", action="store_true", help="Check for updates")
+    parser.add_argument("--version", "-v", action="store_true", help="Show version information")
+    parser.add_argument("--profile", help="Specify a configuration profile to use (e.g., work, personal)")
 
-    status_parser = subparsers.add_parser(
-        "status",
-        help="Parse Codex /status text or tmux helper output into exact backup metadata.",
-    )
-    status_parser.add_argument(
-        "--backup-dir",
-        default=str(DEFAULT_BACKUP_DIR),
-        help="Directory containing backup archives and metadata.",
-    )
-    status_parser.add_argument(
-        "--input-file",
-        help="Read status text from a file instead of stdin.",
-    )
-    status_parser.add_argument(
-        "--status-command",
-        help="Shell command that prints parseable Codex status text.",
-    )
-    status_parser.add_argument(
-        "--reference-year",
-        type=int,
-        help="Year used when the status text omits the year in reset time.",
-    )
-    status_parser.add_argument(
-        "--codex-command",
-        default="codex --no-alt-screen",
-        help="Command used to launch Codex for live tmux capture.",
-    )
-    status_parser.add_argument(
-        "--tmux-session-name",
-        default=None,
-        help="Temporary tmux session name used for live status capture.",
-    )
-    status_parser.add_argument(
-        "--tmux-cols",
-        type=int,
-        default=120,
-        help="tmux capture width for live status capture.",
-    )
-    status_parser.add_argument(
-        "--tmux-rows",
-        type=int,
-        default=40,
-        help="tmux capture height for live status capture.",
-    )
-    status_parser.add_argument(
-        "--startup-timeout-seconds",
-        type=float,
-        default=20.0,
-        help="Seconds to wait for the Codex prompt.",
-    )
-    status_parser.add_argument(
-        "--status-timeout-seconds",
-        type=float,
-        default=20.0,
-        help="Seconds to wait for the status panel.",
-    )
-    status_parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="Update status metadata in Cloud (B2) as well.",
-    )
-    status_parser.add_argument("--bucket", help="B2 Bucket Name")
-    status_parser.add_argument("--b2-id", help="B2 Key ID")
-    status_parser.add_argument("--b2-key", help="B2 App Key")
-
-    backup_parser = subparsers.add_parser(
-        "backup",
-        help="Create a live Codex backup named from exact /status reset time.",
-    )
-    backup_parser.add_argument(
-        "--source-dir",
-        default=str(DEFAULT_CODEX_HOME),
-        help="Codex home directory to archive.",
-    )
-    backup_parser.add_argument(
-        "--backup-dir",
-        default=str(DEFAULT_BACKUP_DIR),
-        help="Directory where backup archives and metadata are written.",
-    )
-    backup_parser.add_argument(
-        "--status-file",
-        help="Read Codex status text from a file instead of capturing it live.",
-    )
-    backup_parser.add_argument(
-        "--status-command",
-        help="Shell command that prints parseable Codex status text.",
-    )
-    backup_parser.add_argument(
-        "--reference-year",
-        type=int,
-        help="Year used when the status text omits the year in reset time.",
-    )
-    backup_parser.add_argument(
-        "--codex-command",
-        default="codex --no-alt-screen",
-        help="Command used to launch Codex for live tmux capture.",
-    )
-    backup_parser.add_argument(
-        "--tmux-session-name",
-        default=None,
-        help="Temporary tmux session name used for live status capture.",
-    )
-    backup_parser.add_argument(
-        "--tmux-cols",
-        type=int,
-        default=120,
-        help="tmux capture width for live status capture.",
-    )
-    backup_parser.add_argument(
-        "--tmux-rows",
-        type=int,
-        default=40,
-        help="tmux capture height for live status capture.",
-    )
-    backup_parser.add_argument(
-        "--startup-timeout-seconds",
-        type=float,
-        default=20.0,
-        help="Seconds to wait for the Codex prompt.",
-    )
-    backup_parser.add_argument(
-        "--status-timeout-seconds",
-        type=float,
-        default=20.0,
-        help="Seconds to wait for the status panel.",
-    )
-    backup_parser.add_argument(
-        "--without-status-check",
-        action="store_true",
-        help="Skip live status capture and use current time minus 7 days for cooldown calculation.",
-    )
-    backup_parser.add_argument(
-        "--include-tmp",
-        action="store_true",
-        help="Include tmp and .tmp directories in the archive.",
-    )
-    backup_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Compute paths and metadata without creating files.",
-    )
-    backup_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite an existing archive if the computed name already exists.",
-    )
-    backup_parser.add_argument(
-        "--auth-only",
-        action="store_true",
-        help="Only backup auth.json, config.toml, installation_id, etc. instead of the full state.",
-    )
-    backup_parser.add_argument(
-        "--prune-first",
-        action="store_true",
-        help="Run prune on runtime state before taking the backup.",
-    )
-    backup_parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="Create local backup AND upload to Cloud (B2).",
-    )
+    # Backup command
+    backup_parser = subparsers.add_parser("backup", help="Backup Gemini configuration and chats (local or Backblaze B2 cloud).")
+    backup_parser.add_argument("--src", default="~/.gemini-manager", help="Source gemini-manager dir (default ~/.gemini-manager)")
+    backup_parser.add_argument("--archive-dir", default=DEFAULT_BACKUP_DIR, help="Directory to store tar.gz archives (default: ~/.gemini-manager/backups)")
+    backup_parser.add_argument("--dest-dir-parent", default=OLD_CONFIGS_DIR, help="Parent directory where timestamped directory backups are stored")
+    backup_parser.add_argument("--dry-run", action="store_true", help="Do not perform destructive actions")
+    backup_parser.add_argument("--cloud", action="store_true", help="Create local backup AND upload to Cloud (B2)")
     backup_parser.add_argument("--bucket", help="B2 Bucket Name")
-    backup_parser.add_argument("--b2-id", help="B2 Key ID")
-    backup_parser.add_argument("--b2-key", help="B2 App Key")
+    backup_parser.add_argument("--b2-id", help="B2 Key ID (or set env GEMINI_B2_KEY_ID)")
+    backup_parser.add_argument("--b2-key", help="B2 App Key (or set env GEMINI_B2_APP_KEY)")
 
-    restore_parser = subparsers.add_parser(
-        "restore",
-        help="Full State Recovery: Restore an entire Codex environment (Auth + History + Logs) from a backup.",
-    )
-    restore_parser.add_argument(
-        "--from-archive",
-        help="Path to a specific Codex backup archive.",
-    )
-    restore_parser.add_argument(
-        "--email",
-        help="Restore from the latest symlink for this email.",
-    )
-    restore_parser.add_argument(
-        "--backup-dir",
-        default=str(_get_default("backup_dir", str(DEFAULT_BACKUP_DIR))),
-        help="Directory containing backup archives and metadata.",
-    )
-    restore_parser.add_argument(
-        "--dest-dir",
-        default=str(_get_default("codex_home", str(DEFAULT_CODEX_HOME))),
-        help="Codex home directory to restore into.",
-    )
-    restore_parser.add_argument(
-        "--status-command",
-        help="Shell command that prints parseable Codex status text.",
-    )
-    restore_parser.add_argument(
-        "--reference-year",
-        type=int,
-        help="Year used when the status text omits the year in reset time.",
-    )
-    restore_parser.add_argument(
-        "--codex-command",
-        default="codex --no-alt-screen",
-        help="Command used to launch Codex for live tmux capture.",
-    )
-    restore_parser.add_argument(
-        "--tmux-session-name",
-        default=None,
-        help="Temporary tmux session name used for live status capture.",
-    )
-    restore_parser.add_argument(
-        "--tmux-cols",
-        type=int,
-        default=120,
-        help="tmux capture width for live status capture.",
-    )
-    restore_parser.add_argument(
-        "--tmux-rows",
-        type=int,
-        default=40,
-        help="tmux capture height for live status capture.",
-    )
-    restore_parser.add_argument(
-        "--startup-timeout-seconds",
-        type=float,
-        default=20.0,
-        help="Seconds to wait for the Codex prompt.",
-    )
-    restore_parser.add_argument(
-        "--status-timeout-seconds",
-        type=float,
-        default=20.0,
-        help="Seconds to wait for the status panel.",
-    )
-    restore_parser.add_argument(
-        "--without-status-check",
-        action="store_true",
-        help="Skip current account status capture before restore.",
-    )
-    restore_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Validate and stage the restore without changing the destination.",
-    )
-    restore_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Delete an existing destination instead of moving it aside to a safety backup.",
-    )
-    restore_parser.add_argument(
-        "--auth-only",
-        action="store_true",
-        help="Identity Only: Only restore auth.json and config files, preserving current session history/logs.",
-    )
-    restore_parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="Restore from Cloud (B2).",
-    )
+    # Restore command
+    restore_parser = subparsers.add_parser("restore", help="Restore Gemini configuration from a backup (local or Backblaze B2 cloud).")
+    restore_parser.add_argument("--from-dir", help="Directory backup to restore from (preferred)")
+    restore_parser.add_argument("--from-archive", help="Tar.gz archive to restore from")
+    restore_parser.add_argument("--email", help="Restore the latest backup for this email")
+    restore_parser.add_argument("--search-dir", default=DEFAULT_BACKUP_DIR, help="Directory to search for backup archives (*.gemini-manager.tar.gz) when no --from-dir (default: ~/.gemini-manager/backups)")
+    restore_parser.add_argument("--dest", default=DEFAULT_GEMINI_HOME, help=f"Destination (default {DEFAULT_GEMINI_HOME})")
+    restore_parser.add_argument("--force", action="store_true", help="Allow destructive replace without keeping .bak")
+    restore_parser.add_argument("--dry-run", action="store_true", help="Do a dry run without destructive actions")
+    restore_mode = restore_parser.add_mutually_exclusive_group()
+    restore_mode.add_argument("--auth-only", action="store_true", help="Restore only Gemini identity files and preserve current sessions (default)")
+    restore_mode.add_argument("--full", action="store_true", help="Replace the whole Gemini state directory")
+    restore_parser.add_argument("--cloud", action="store_true", help="Restore from Cloud (B2)")
     restore_parser.add_argument("--bucket", help="B2 Bucket Name")
     restore_parser.add_argument("--b2-id", help="B2 Key ID")
     restore_parser.add_argument("--b2-key", help="B2 App Key")
+    restore_parser.add_argument("--auto", action="store_true", help="Automatically restore the best available account")
 
-    list_backups_parser = subparsers.add_parser(
-        "list-backups",
-        help="List available Codex backup archives with metadata.",
-    )
-    list_backups_parser.add_argument(
-        "--backup-dir",
-        default=str(_get_default("backup_dir", str(DEFAULT_BACKUP_DIR))),
-        help="Directory containing backup archives and metadata.",
-    )
-    list_backups_parser.add_argument(
-        "--email",
-        help="Filter backups for a specific email.",
-    )
-    list_backups_parser.add_argument(
-        "--latest-per-email",
-        action="store_true",
-        default=True,
-        help="Only show the latest backup for each email (Default).",
-    )
-    list_backups_parser.add_argument(
-        "--all",
-        action="store_false",
-        dest="latest_per_email",
-        help="Show all backups, including historical and duplicate entries.",
-    )
-    list_backups_parser.add_argument(
-        "--ready",
-        action="store_true",
-        help="Only show backups whose cooldown has expired.",
-    )
-    list_backups_parser.add_argument(
-        "--sort",
-        choices=["reset_at", "session_start_at", "created_at"],
-        default="created_at",
-        help="Sort backups by the specified field.",
-    )
-    list_backups_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output the list as JSON.",
-    )
-    list_backups_parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="List backups from Cloud (B2).",
-    )
+    # Chat command
+    chat_parser = subparsers.add_parser("chat", help="Manage chat history.")
+    chat_subparsers = chat_parser.add_subparsers(dest="chat_command", help="Chat commands")
+    chat_backup_parser = chat_subparsers.add_parser("backup", help="Backup chat history.")
+    chat_restore_parser = chat_subparsers.add_parser("restore", help="Restore chat history.")
+    chat_cleanup_parser = chat_subparsers.add_parser("cleanup", help="Clear temporary chat history and logs.")
+    chat_cleanup_parser.add_argument("--dry-run", action="store_true", help="Show what would be deleted without doing it")
+    chat_cleanup_parser.add_argument("--force", action="store_true", help="Skip confirmation prompt")
+    chat_resume_parser = chat_subparsers.add_parser("resume", help="Resume the last chat session.")
+
+    # Integrity check command
+    integrity_parser = subparsers.add_parser("check-integrity", help="Check integrity of current configuration against the latest backup.")
+    integrity_parser.add_argument("--src", default="~/.gemini-manager", help="Source directory for integrity check (default: ~/.gemini-manager)")
+
+
+    # List backups command
+    list_backups_parser = subparsers.add_parser("list-backups", help="List available backups (local or Backblaze B2 cloud).")
+    list_backups_parser.add_argument("--search-dir", default=DEFAULT_BACKUP_DIR, help="Directory to search for backup archives (default: ~/.gemini-manager/backups)")
+    list_backups_parser.add_argument("--all", action="store_true", help="Show every archive instead of only the latest backup per email")
+    list_backups_parser.add_argument("--show-dirs", action="store_true", help="Also show legacy directory backups from ~/.gemini-manager-old")
+    list_backups_parser.add_argument("--cloud", action="store_true", help="List backups from Cloud (B2)")
     list_backups_parser.add_argument("--bucket", help="B2 Bucket Name")
     list_backups_parser.add_argument("--b2-id", help="B2 Key ID")
     list_backups_parser.add_argument("--b2-key", help="B2 App Key")
 
-    prune_backups_parser = subparsers.add_parser(
-        "prune-backups",
-        help="Delete old backup archives.",
-    )
-    prune_backups_parser.add_argument(
-        "--backup-dir",
-        default=str(_get_default("backup_dir", str(DEFAULT_BACKUP_DIR))),
-        help="Directory containing backup archives and metadata.",
-    )
-    prune_backups_parser.add_argument(
-        "--keep",
-        type=int,
-        help="Number of backups to keep per email address (e.g. --keep 1 to keep only the latest account backup).",
-    )
-    prune_backups_parser.add_argument(
-        "--keep-latest-per-email",
-        action="store_true",
-        help="Keep only the latest backup per email, pruning all older ones.",
-    )
-    prune_backups_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be removed without deleting anything.",
-    )
-    prune_backups_parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="Prune backups from Cloud (B2).",
-    )
+    # Check B2 command
+    check_b2_parser = subparsers.add_parser("check-b2", help="Verify Backblaze B2 credentials.")
+    check_b2_parser.add_argument("--b2-id", help="B2 Key ID (or set env GEMINI_B2_KEY_ID)")
+    check_b2_parser.add_argument("--b2-key", help="B2 App Key (or set env GEMINI_B2_APP_KEY)")
+    check_b2_parser.add_argument("--bucket", help="B2 Bucket Name (or set env GEMINI_B2_BUCKET)")
+
+    # Sync command (Unified Push/Pull)
+    sync_parser = subparsers.add_parser("sync", help="Sync backups with Cloud (B2).")
+    sync_subparsers = sync_parser.add_subparsers(dest="sync_direction", help="Sync direction")
+
+    # Sync Push (Local -> Cloud)
+    push_parser = sync_subparsers.add_parser("push", help="Upload missing local backups to Cloud.")
+    push_parser.add_argument("--backup-dir", default=DEFAULT_BACKUP_DIR, help="Local backup directory (default: ~/.gemini-manager/backups)")
+    push_parser.add_argument("--bucket", help="B2 Bucket Name")
+    push_parser.add_argument("--b2-id", help="B2 Key ID")
+    push_parser.add_argument("--b2-key", help="B2 App Key")
+
+    # Sync Pull (Cloud -> Local)
+    pull_parser = sync_subparsers.add_parser("pull", help="Download missing Cloud backups to local.")
+    pull_parser.add_argument("--backup-dir", default=DEFAULT_BACKUP_DIR, help="Local backup directory (default: ~/.gemini-manager/backups)")
+    pull_parser.add_argument("--bucket", help="B2 Bucket Name")
+    pull_parser.add_argument("--b2-id", help="B2 Key ID")
+    pull_parser.add_argument("--b2-key", help="B2 App Key")
+
+    # Config command
+    config_parser = subparsers.add_parser("config", help="Manage persistent configuration.")
+    config_parser.add_argument("config_action", choices=["set", "get", "list", "unset", "init"], nargs="?", help="Action to perform")
+    config_parser.add_argument("key", nargs="?", help="Setting key")
+    config_parser.add_argument("value", nargs="?", help="Setting value")
+    config_parser.add_argument("--force", action="store_true", help="Force save sensitive keys without confirmation (automation mode)")
+    config_parser.add_argument("--init", action="store_true", help="Run the interactive configuration wizard")
+
+    # Resets command (New subcommand for reset management)
+    resets_parser = subparsers.add_parser("resets", help="Manage Gemini free tier reset schedules.")
+    resets_parser.add_argument("--list", action="store_true", help="List saved schedules")
+    resets_parser.add_argument("--next", nargs="?", const="*ALL*", help="Show next usage time. Optionally pass email or id.")
+    resets_parser.add_argument("--add", nargs="?", const="", help="Add time manually. Example: --add '01:00 PM user@example.com'")
+    resets_parser.add_argument("--remove", nargs=1, help="Remove saved entry by id or email.")
+
+    # Doctor command
+    subparsers.add_parser("doctor", help="Run system diagnostic check.")
+
+    # Prune command (Workspace Pruning)
+    prune_parser = subparsers.add_parser("prune", help="Remove Gemini runtime state (tmp, history, logs) while preserving identity.")
+    prune_parser.add_argument("--src", default=DEFAULT_GEMINI_HOME, help=f"Gemini home directory to prune (default: {DEFAULT_GEMINI_HOME})")
+    prune_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed without deleting anything")
+
+    # Prune Backups command (Backup Repo Pruning)
+    prune_backups_parser = subparsers.add_parser("prune-backups", help="Delete old backup archives and metadata.")
+    prune_backups_parser.add_argument("--backup-dir", default=DEFAULT_BACKUP_DIR, help=f"Local backup directory (default: {DEFAULT_BACKUP_DIR})")
+    prune_backups_parser.add_argument("--keep", type=int, help="Number of most recent backups to keep PER ACCOUNT")
+    prune_backups_parser.add_argument("--cloud", action="store_true", help="Prune backups from Cloud (B2) ONLY (does not prune local if set)")
+
+    prune_backups_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed without deleting anything")
     prune_backups_parser.add_argument("--bucket", help="B2 Bucket Name")
     prune_backups_parser.add_argument("--b2-id", help="B2 Key ID")
     prune_backups_parser.add_argument("--b2-key", help="B2 App Key")
 
-    profile_parser = subparsers.add_parser(
-        "profile",
-        help="Export or import the complete codex manager profile state.",
-    )
-    profile_parser.add_argument(
-        "action",
-        choices=["export", "import"],
-        help="Action to perform: export or import.",
-    )
-    profile_parser.add_argument(
-        "file",
-        help="Path to the profile archive (.tar.gz) to export to or import from.",
-    )
-    profile_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would happen without modifying metadata.",
-    )
+    # Cooldown command
+    cooldown_parser = subparsers.add_parser("cooldown", help="Show account cooldown status, with optional cloud sync.")
+    cooldown_parser.add_argument("--cloud", action="store_true", help="Sync cooldown status from the cloud.")
+    cooldown_parser.add_argument("--bucket", help="B2 Bucket Name")
+    cooldown_parser.add_argument("--b2-id", help="B2 Key ID")
+    cooldown_parser.add_argument("--b2-key", help="B2 App Key")
+    cooldown_parser.add_argument("--remove", nargs=1, help="Remove an account from the dashboard (both cooldown and resets).")
+    cooldown_parser.add_argument("--reset-all", action="store_true", help="⚠️ Clear ALL account activity and reset data (Local & Cloud).")
 
-    doctor_parser = subparsers.add_parser(
-        "doctor",
-        help="Verify dependencies, directories, and status parser.",
-    )
-    doctor_parser.add_argument(
-        "--source-dir",
-        default=str(_get_default("codex_home", str(DEFAULT_CODEX_HOME))),
-        help="Codex home directory to check.",
-    )
-    doctor_parser.add_argument(
-        "--backup-dir",
-        default=str(_get_default("backup_dir", str(DEFAULT_BACKUP_DIR))),
-        help="Directory containing backup archives and metadata to check.",
-    )
+    # Recommend command
+    recommend_parser = subparsers.add_parser("recommend", aliases=["next"], help="Suggest the next best account (Green & Least Recently Used).")
+    recommend_parser.add_argument("--backup-dir", default=DEFAULT_BACKUP_DIR, help="Directory containing backup archives and metadata")
+    recommend_parser.add_argument("--cloud", action="store_true", help="Recommend from Cloud metadata")
+    recommend_parser.add_argument("--use", action="store_true", help="Immediately switch to the recommended account (auth-only)")
+    recommend_parser.add_argument("--restore", action="store_true", help="Immediately full-restore the recommended account")
+    recommend_parser.add_argument("--dest", default=DEFAULT_GEMINI_HOME, help=f"Gemini home directory to restore into (default {DEFAULT_GEMINI_HOME})")
+    recommend_parser.add_argument("--dry-run", action="store_true", help="Show what would happen without switching")
+    recommend_parser.add_argument("--force", action="store_true", help="Allow destructive replacement for --restore")
+    recommend_parser.add_argument("--bucket", help="B2 Bucket Name")
+    recommend_parser.add_argument("--b2-id", help="B2 Key ID")
+    recommend_parser.add_argument("--b2-key", help="B2 App Key")
 
-    prune_parser = subparsers.add_parser(
-        "prune",
-        help="Remove Codex runtime state while preserving auth.json and account identity.",
-    )
-    prune_parser.add_argument(
-        "--source-dir",
-        default=str(_get_default("codex_home", str(DEFAULT_CODEX_HOME))),
-        help="Codex home directory to prune.",
-    )
-    prune_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be removed without deleting anything.",
-    )
+    # Stats command
+    stats_parser = subparsers.add_parser("stats", aliases=["usage"], help="Show usage statistics (last 7 days).")
 
-    use_parser = subparsers.add_parser(
-        "use",
-        help="Quick Switcher: Log into a backed-up account. Defaults to Auth-Only (preserves current history).",
-    )
-    use_parser.add_argument(
-        "--from-archive",
-        help="Path to a specific Codex backup archive.",
-    )
-    use_parser.add_argument(
-        "--email",
-        help="Use the latest backup symlink for this email.",
-    )
-    use_parser.add_argument(
-        "--backup-dir",
-        default=str(_get_default("backup_dir", str(DEFAULT_BACKUP_DIR))),
-        help="Directory containing backup archives and metadata.",
-    )
-    use_parser.add_argument(
-        "--dest-dir",
-        default=str(_get_default("codex_home", str(DEFAULT_CODEX_HOME))),
-        help="Codex home directory to restore into.",
-    )
-    use_parser.add_argument(
-        "--status-command",
-        help="Shell command that prints parseable Codex status text.",
-    )
-    use_parser.add_argument(
-        "--reference-year",
-        type=int,
-        help="Year used when the status text omits the year in reset time.",
-    )
-    use_parser.add_argument(
-        "--codex-command",
-        default="codex --no-alt-screen",
-        help="Command used to launch Codex for live tmux capture.",
-    )
-    use_parser.add_argument(
-        "--tmux-session-name",
-        default=None,
-        help="Temporary tmux session name used for live status capture.",
-    )
-    use_parser.add_argument(
-        "--tmux-cols",
-        type=int,
-        default=120,
-        help="tmux capture width for live status capture.",
-    )
-    use_parser.add_argument(
-        "--tmux-rows",
-        type=int,
-        default=40,
-        help="tmux capture height for live status capture.",
-    )
-    use_parser.add_argument(
-        "--startup-timeout-seconds",
-        type=float,
-        default=20.0,
-        help="Seconds to wait for the Codex prompt.",
-    )
-    use_parser.add_argument(
-        "--status-timeout-seconds",
-        type=float,
-        default=20.0,
-        help="Seconds to wait for the status panel.",
-    )
-    use_parser.add_argument(
-        "--without-status-check",
-        action="store_true",
-        help="Skip current account status capture before switching.",
-    )
-    use_parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="Prune runtime state and then do a full restore for a clean start.",
-    )
-    use_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would happen without modifying the destination.",
-    )
-    use_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Reserved for future full-restore switching behavior; auth-only switching does not replace the whole destination.",
-    )
-    use_parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="Use a backup from Cloud (B2).",
-    )
-    use_parser.add_argument("--bucket", help="B2 Bucket Name")
-    use_parser.add_argument("--b2-id", help="B2 Key ID")
-    use_parser.add_argument("--b2-key", help="B2 App Key")
-    status_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would happen without modifying metadata.",
-    )
+    # Profile command
+    profile_parser = subparsers.add_parser("profile", help="Manage configuration profiles.")
+    profile_subparsers = profile_parser.add_subparsers(dest="profile_command", help="Profile commands")
 
-    sync_parser = subparsers.add_parser(
-        "sync",
-        help="Sync backups to or from an S3-compatible bucket.",
-    )
-    sync_parser.add_argument(
-        "direction",
-        choices=["push", "pull"],
-        help="Direction to sync: 'push' to upload, 'pull' to download.",
-    )
-    sync_parser.add_argument(
-        "--bucket-name",
-        help="Name of the S3 bucket to sync with. Defaults to B2 config if available.",
-    )
-    sync_parser.add_argument(
-        "--endpoint-url",
-        help="S3 endpoint URL (e.g. for Backblaze B2). Defaults to AWS_ENDPOINT_URL env var.",
-    )
-    sync_parser.add_argument(
-        "--access-key",
-        help="AWS access key ID. Defaults to AWS_ACCESS_KEY_ID env var.",
-    )
-    sync_parser.add_argument(
-        "--secret-key",
-        help="AWS secret access key. Defaults to AWS_SECRET_ACCESS_KEY env var.",
-    )
-    sync_parser.add_argument(
-        "--backup-dir",
-        default=str(_get_default("backup_dir", str(DEFAULT_BACKUP_DIR))),
-        help="Directory containing backup archives and metadata.",
-    )
-    sync_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would happen without actually syncing.",
-    )
+    # Profile Export
+    profile_export = profile_subparsers.add_parser("export", help="Export profile to a zip file.")
+    profile_export.add_argument("file", help="Output zip filename")
 
-    purge_parser = subparsers.add_parser(
-        "purge",
-        help="Total Wipeout: Completely delete the Codex home directory (Auth, Identity, and all State).",
-    )
-    purge_parser.add_argument(
-        "--source-dir",
-        default=str(_get_default("codex_home", str(DEFAULT_CODEX_HOME))),
-        help="Codex home directory to purge.",
-    )
-    purge_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be removed without deleting anything.",
-    )
-    purge_parser.add_argument(
-        "--yes",
-        "-y",
-        action="store_true",
-        help="Confirm the purge without prompting.",
-    )
+    # Profile Import
+    profile_import = profile_subparsers.add_parser("import", help="Import profile from a zip file.")
+    profile_import.add_argument("file", help="Input zip filename")
+    profile_import.add_argument("--force", action="store_true", help="Overwrite existing files without confirmation")
 
-    remove_parser = subparsers.add_parser(
-        "remove",
-        help="Account Cleanup: Delete all local (and optionally cloud) backups and registry entries for a specific email.",
-    )
-    remove_parser.add_argument(
-        "--email",
-        required=True,
-        help="The email address of the account to remove.",
-    )
-    remove_parser.add_argument(
-        "--backup-dir",
-        default=str(_get_default("backup_dir", str(DEFAULT_BACKUP_DIR))),
-        help="Directory containing backup archives and metadata.",
-    )
-    remove_parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="Also remove backups and registry entries from Cloud (B2).",
-    )
-    remove_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be removed without deleting anything.",
-    )
-    remove_parser.add_argument(
-        "--yes",
-        "-y",
-        action="store_true",
-        help="Confirm the removal without prompting.",
-    )
-    remove_parser.add_argument("--bucket", help="B2 Bucket Name")
-    remove_parser.add_argument("--b2-id", help="B2 Key ID")
-    remove_parser.add_argument("--b2-key", help="B2 App Key")
+    # Status command
+    status_parser = subparsers.add_parser("status", help="Show current Gemini status (live capture).")
+    status_parser.add_argument("--cloud", action="store_true", help="Sync status with the cloud.")
+    status_parser.add_argument("--bucket", help="B2 Bucket Name")
+    status_parser.add_argument("--b2-id", help="B2 Key ID")
+    status_parser.add_argument("--b2-key", help="B2 App Key")
 
     return parser

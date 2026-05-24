@@ -5,6 +5,7 @@ import os
 import shutil
 from .ui import cprint, NEON_GREEN, NEON_RED, NEON_YELLOW, NEON_CYAN
 from .config import DEFAULT_GEMINI_HOME
+from .protected import is_protected
 
 # Workspace items to prune (Matching Codex Manager philosophy)
 FILE_GLOBS = [
@@ -42,6 +43,9 @@ def do_prune(args):
 
     # Identify files
     for entry in os.listdir(gemini_home):
+        if is_protected(entry):
+            continue
+
         path = os.path.join(gemini_home, entry)
         if os.path.isfile(path):
             for pattern in FILE_GLOBS:

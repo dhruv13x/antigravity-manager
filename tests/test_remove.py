@@ -14,8 +14,9 @@ class DummyArgs:
 def test_perform_remove_local(tmp_path, monkeypatch):
     bdir = tmp_path / "backups"
     bdir.mkdir()
-    (bdir / "user@example.com_123.tar.gz").touch()
-    (bdir / "other@example.com_123.tar.gz").touch()
+    (bdir / "2026-05-24-123456-user@example.com-antigravity.tar.gz").touch()
+    (bdir / "user@example.com-latest-antigravity.tar.gz").touch()
+    (bdir / "2026-05-24-123456-other@example.com-antigravity.tar.gz").touch()
 
     registry = {"user@example.com": {"reset_at": "xxx"}, "other@example.com": {"reset_at": "yyy"}}
 
@@ -27,12 +28,14 @@ def test_perform_remove_local(tmp_path, monkeypatch):
     args = DummyArgs("user@example.com", str(bdir), yes=True)
     results = perform_remove(args)
 
-    assert len(results["local_files_removed"]) == 1
-    assert "user@example.com_123.tar.gz" in results["local_files_removed"][0]
+    assert len(results["local_files_removed"]) == 2
+    assert any("2026-05-24-123456-user@example.com-antigravity.tar.gz" in f for f in results["local_files_removed"])
+    assert any("user@example.com-latest-antigravity.tar.gz" in f for f in results["local_files_removed"])
     assert results["local_registry_removed"] is True
 
-    assert not (bdir / "user@example.com_123.tar.gz").exists()
-    assert (bdir / "other@example.com_123.tar.gz").exists()
+    assert not (bdir / "2026-05-24-123456-user@example.com-antigravity.tar.gz").exists()
+    assert not (bdir / "user@example.com-latest-antigravity.tar.gz").exists()
+    assert (bdir / "2026-05-24-123456-other@example.com-antigravity.tar.gz").exists()
 
 def test_remove_result_to_text():
     results = {

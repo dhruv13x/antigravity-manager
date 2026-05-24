@@ -64,10 +64,40 @@ def validate_member_name(name: str) -> None:
 
 
 def safe_extract(archive_path: Path, dest_dir: Path) -> None:
-    with tarfile.open(archive_path, "r:gz") as tar:
-        for member in tar.getmembers():
-            validate_member_name(member.name)
-        tar.extractall(dest_dir, filter="data")
+    if archive_path.suffix == ".gpg":
+        import getpass
+        import subprocess
+
+        with tempfile.NamedTemporaryFile(suffix=".tar.gz") as temp_archive:
+            temp_path = Path(temp_archive.name)
+            passphrase = os.environ.get("AGM_BACKUP_PASSWORD")
+            if not passphrase:
+                passphrase = getpass.getpass(f"Passphrase for {archive_path.name}: ")
+
+            gpg_cmd = [
+                "gpg",
+                "--decrypt",
+                "--passphrase-fd",
+                "0",
+                "--batch",
+                "--yes",
+                "--output",
+                str(temp_path),
+                str(archive_path),
+            ]
+            try:
+                subprocess.run(gpg_cmd, input=passphrase.encode(), check=True)
+                with tarfile.open(temp_path, "r:gz") as tar:
+                    for member in tar.getmembers():
+                        validate_member_name(member.name)
+                    tar.extractall(dest_dir, filter="data")
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                raise RuntimeError(f"GPG decryption failed: {e}")
+    else:
+        with tarfile.open(archive_path, "r:gz") as tar:
+            for member in tar.getmembers():
+                validate_member_name(member.name)
+            tar.extractall(dest_dir, filter="data")
 
 
 def backup_existing_file(path: Path, *, label: str) -> Path | None:

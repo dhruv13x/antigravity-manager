@@ -1,115 +1,134 @@
-from __future__ import annotations
+#!/usr/bin/env python3
+# src/gemini_manager/sync.py
 
+"""
+sync.py - Synchronize backups between local storage and Cloud (B2).
+
+Features:
+- sync push: Upload local backups that are missing in the cloud.
+- sync pull: Download cloud backups that are missing locally.
+"""
 import os
-from pathlib import Path
+import sys
+from .ui import cprint, NEON_GREEN, NEON_CYAN, NEON_YELLOW, NEON_RED, NEON_MAGENTA
+from .cloud_factory import get_cloud_provider
+from .config import ACCOUNTS_DIR
 
-import boto3
-from botocore.exceptions import ClientError
+def get_local_backups(backup_dir):
+    """Returns a set of local backup filenames (archives, snapshots, and account states)."""
+    backup_dir = os.path.abspath(os.path.expanduser(backup_dir))
+    accounts_dir = os.path.abspath(os.path.expanduser(ACCOUNTS_DIR))
 
-from .ui import console
+    all_files = set()
 
+    # 1. Archives and Snapshots (Backup Dir)
+    if os.path.isdir(backup_dir):
+        for f in os.listdir(backup_dir):
+            if os.path.isfile(os.path.join(backup_dir, f)) and (
+                f.endswith(".gemini-manager.tar.gz") or 
+                f.endswith(".gemini-manager.tar.gz.gpg") or
+                f.endswith(".snapshot.json") or
+                f.endswith(".metadata.json") # Legacy support
+            ):
+                all_files.add(f)
 
-def _get_s3_client(endpoint_url: str | None, access_key: str | None, secret_key: str | None) -> boto3.client:
-    # use env vars if not passed
-    endpoint_url = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
-    access_key = access_key or os.environ.get("AWS_ACCESS_KEY_ID")
-    secret_key = secret_key or os.environ.get("AWS_SECRET_ACCESS_KEY")
+    # 2. Account States (Accounts Dir)
+    if os.path.isdir(accounts_dir):
+        for f in os.listdir(accounts_dir):
+            if os.path.isfile(os.path.join(accounts_dir, f)) and f.endswith(".state.json"):
+                # We prefix with 'accounts/' for cloud mapping
+                all_files.add(f"accounts/{f}")
 
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-    )
+    return all_files
 
-
-def push_backup(
-    backup_dir: Path,
-    bucket_name: str,
-    endpoint_url: str | None = None,
-    access_key: str | None = None,
-    secret_key: str | None = None,
-    dry_run: bool = False,
-) -> None:
-    s3 = _get_s3_client(endpoint_url, access_key, secret_key)
-
-    # Fetch remote state
-    remote_files = {}
+def get_cloud_backups(provider):
+    """Returns a set of cloud backup filenames (archives, snapshots, and account states)."""
+    cloud_files = set()
     try:
-        response = s3.list_objects_v2(Bucket=bucket_name)
-        if "Contents" in response:
-            for obj in response["Contents"]:
-                remote_files[obj["Key"]] = obj["Size"]
-    except ClientError as e:
-        console.print(f"[bold red]Failed to list remote bucket {bucket_name}: {e}[/]", stderr=True)
-        return
+        files = provider.list_files()
+        for f in files:
+            name = getattr(f, "name", "")
+            if (name.endswith(".gemini-manager.tar.gz") or 
+                name.endswith(".gemini-manager.tar.gz.gpg") or
+                name.endswith(".snapshot.json") or
+                name.endswith(".state.json") or
+                name.endswith(".metadata.json")):
+                cloud_files.add(name)
+    except Exception as e:
+        cprint(NEON_RED, f"[ERROR] Failed to list cloud backups: {e}")
+        sys.exit(1)
+    return cloud_files
 
-    # Push all tar.gz and metadata.json files
-    backup_files = sorted(list(backup_dir.glob("*.tar.gz")) + list(backup_dir.glob("*.metadata.json")))
+def perform_sync(direction: str, args):
+    """
+    Unified sync logic.
+    direction: "push" (Local -> Cloud) or "pull" (Cloud -> Local)
+    """
+    provider = get_cloud_provider(args)
+    if not provider:
+        sys.exit(1)
 
-    for file_path in backup_files:
-        if not file_path.is_file() or file_path.is_symlink():
-            continue
+    bucket_name = getattr(provider, "bucket_name", "Cloud")
 
-        object_name = file_path.name
-        
-        # Check if file exists and has the same size
-        if object_name in remote_files and remote_files[object_name] == file_path.stat().st_size:
-            console.print(f"Skipping {file_path.name}, already exists in cloud with same size.")
-            continue
+    backup_dir = os.path.abspath(os.path.expanduser(args.backup_dir))
+    accounts_dir = os.path.abspath(os.path.expanduser(ACCOUNTS_DIR))
 
-        if dry_run:
-            console.print(f"Would push {file_path.name} to s3://{bucket_name}/{object_name}")
-            continue
+    # Ensure dirs exist if pulling
+    if direction == "pull":
+        os.makedirs(backup_dir, exist_ok=True)
+        os.makedirs(accounts_dir, exist_ok=True)
 
-        try:
-            console.print(f"Uploading {file_path.name} to s3://{bucket_name}/{object_name}...")
-            s3.upload_file(str(file_path), bucket_name, object_name)
-            console.print(f"[green]Successfully uploaded {file_path.name}[/]")
-        except ClientError as e:
-            console.print(f"[bold red]Failed to upload {file_path.name}: {e}[/]", stderr=True)
+    # For push, ensure backup dir exists (accounts dir is optional but likely exists)
+    if direction == "push" and not os.path.isdir(backup_dir):
+         cprint(NEON_RED, f"[ERROR] Local backup directory not found: {backup_dir}")
+         sys.exit(1)
 
+    arrow_str = "Local -> Cloud" if direction == "push" else "Cloud -> Local"
+    cprint(NEON_MAGENTA, f"Starting Sync ({arrow_str}: {bucket_name})...")
 
-def pull_backup(
-    backup_dir: Path,
-    bucket_name: str,
-    endpoint_url: str | None = None,
-    access_key: str | None = None,
-    secret_key: str | None = None,
-    dry_run: bool = False,
-) -> None:
-    s3 = _get_s3_client(endpoint_url, access_key, secret_key)
+    cprint(NEON_CYAN, "Analyzing differences...")
+    local_files = get_local_backups(backup_dir)
+    cloud_files = get_cloud_backups(provider)
 
-    backup_dir.mkdir(parents=True, exist_ok=True)
-
-    # Use a set for O(1) lookup
-    local_files = {p.name for p in backup_dir.glob("*")}
-
-    try:
-        # Use simple list_objects_v2 for better test compatibility unless we want to rewrite many tests
-        response = s3.list_objects_v2(Bucket=bucket_name)
-        if "Contents" not in response:
-            if not response.get("KeyCount") or response.get("KeyCount") == 0:
-                console.print(f"No objects found in bucket {bucket_name}")
+    if direction == "push":
+        missing = local_files - cloud_files
+        if not missing:
+            cprint(NEON_GREEN, "Cloud is already up-to-date with local backups.")
             return
 
-        for obj in response["Contents"]:
-            object_name = obj["Key"]
-            file_path = backup_dir / object_name
+        cprint(NEON_YELLOW, f"Found {len(missing)} files missing in cloud. Uploading...")
 
-            if object_name in local_files:
-                console.print(f"Skipping {object_name}, already exists locally.")
-                continue
+        for filename in sorted(missing):
+            if filename.startswith("accounts/"):
+                local_path = os.path.join(accounts_dir, os.path.basename(filename))
+            else:
+                local_path = os.path.join(backup_dir, filename)
+            
+            # Simple standard upload (No custom headers needed anymore)
+            provider.upload_file(local_path, filename)
 
-            if dry_run:
-                console.print(f"Would pull s3://{bucket_name}/{object_name} to {file_path}")
-                continue
+        # After pushing authoritative files, sync the Registry
+        try:
+            from .registry import sync_registry_with_cloud
+            sync_registry_with_cloud(provider, direction="push")
+        except Exception:
+            pass
 
-            try:
-                console.print(f"Downloading s3://{bucket_name}/{object_name} to {file_path}...")
-                s3.download_file(bucket_name, object_name, str(file_path))
-                console.print(f"[green]Successfully downloaded {object_name}[/]")
-            except ClientError as e:
-                console.print(f"[bold red]Failed to download {object_name}: {e}[/]", stderr=True)
-    except ClientError as e:
-        console.print(f"[bold red]Failed to sync with bucket {bucket_name}: {e}[/]", stderr=True)
+    elif direction == "pull":
+        missing = cloud_files - local_files
+        if not missing:
+            cprint(NEON_GREEN, "Local storage is already up-to-date with cloud backups.")
+            return
+
+        cprint(NEON_YELLOW, f"Found {len(missing)} files missing locally. Downloading...")
+        for filename in sorted(missing):
+            if filename.startswith("accounts/"):
+                local_path = os.path.join(accounts_dir, os.path.basename(filename))
+            else:
+                local_path = os.path.join(backup_dir, filename)
+
+            # Ensure parent dir exists for pulling
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            provider.download_file(filename, local_path)
+
+    cprint(NEON_GREEN, "Sync Completed Successfully!")

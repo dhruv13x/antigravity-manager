@@ -2,27 +2,21 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
-import boto3
-from botocore.exceptions import ClientError
+from b2sdk.v2 import B2Api, InMemoryAccountInfo
+from rich.console import Console
 
 from .ui import console
 
+console_stderr = Console(stderr=True)
 
-def _get_s3_client(
-    endpoint_url: str | None, access_key: str | None, secret_key: str | None
-) -> Any:
-    # use env vars if not passed
-    endpoint_url = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
-    access_key = access_key or os.environ.get("AWS_ACCESS_KEY_ID")
-    secret_key = secret_key or os.environ.get("AWS_SECRET_ACCESS_KEY")
 
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-    )
+def _get_b2_bucket(key_id: str, app_key: str, bucket_name: str) -> Any:
+    info = InMemoryAccountInfo()
+    b2_api = B2Api(info)
+    b2_api.authorize_account("production", key_id, app_key)
+    return b2_api.get_bucket_by_name(bucket_name)
 
 
 def push_backup(
@@ -33,17 +27,23 @@ def push_backup(
     secret_key: str | None = None,
     dry_run: bool = False,
 ) -> None:
-    s3 = _get_s3_client(endpoint_url, access_key, secret_key)
+    if not access_key or not secret_key:
+        console_stderr.print("[bold red]Missing B2 credentials (KEY_ID or APP_KEY).[/]")
+        return
+
+    try:
+        bucket = _get_b2_bucket(access_key, secret_key, bucket_name)
+    except Exception as e:
+        console_stderr.print(f"[bold red]Failed to connect to B2 bucket {bucket_name}: {e}[/]")
+        return
 
     # Fetch remote state
     remote_files = {}
     try:
-        response = s3.list_objects_v2(Bucket=bucket_name)
-        if "Contents" in response:
-            for obj in response["Contents"]:
-                remote_files[obj["Key"]] = obj["Size"]
-    except ClientError as e:
-        console.print(f"[bold red]Failed to list remote bucket {bucket_name}: {e}[/]", stderr=True)
+        for file_version, _ in bucket.ls(recursive=True):
+            remote_files[file_version.file_name] = file_version.size
+    except Exception as e:
+        console_stderr.print(f"[bold red]Failed to list remote bucket {bucket_name}: {e}[/]")
         return
 
     # Push all tar.gz and metadata.json files
@@ -63,15 +63,15 @@ def push_backup(
             continue
 
         if dry_run:
-            console.print(f"Would push {file_path.name} to s3://{bucket_name}/{object_name}")
+            console.print(f"Would push {file_path.name} to b2://{bucket_name}/{object_name}")
             continue
 
         try:
-            console.print(f"Uploading {file_path.name} to s3://{bucket_name}/{object_name}...")
-            s3.upload_file(str(file_path), bucket_name, object_name)
+            console.print(f"Uploading {file_path.name} to b2://{bucket_name}/{object_name}...")
+            bucket.upload_local_file(local_file=str(file_path), file_name=object_name)
             console.print(f"[green]Successfully uploaded {file_path.name}[/]")
-        except ClientError as e:
-            console.print(f"[bold red]Failed to upload {file_path.name}: {e}[/]", stderr=True)
+        except Exception as e:
+            console_stderr.print(f"[bold red]Failed to upload {file_path.name}: {e}[/]")
 
 
 def pull_backup(
@@ -82,7 +82,15 @@ def pull_backup(
     secret_key: str | None = None,
     dry_run: bool = False,
 ) -> None:
-    s3 = _get_s3_client(endpoint_url, access_key, secret_key)
+    if not access_key or not secret_key:
+        console_stderr.print("[bold red]Missing B2 credentials (KEY_ID or APP_KEY).[/]")
+        return
+
+    try:
+        bucket = _get_b2_bucket(access_key, secret_key, bucket_name)
+    except Exception as e:
+        console_stderr.print(f"[bold red]Failed to connect to B2 bucket {bucket_name}: {e}[/]")
+        return
 
     backup_dir.mkdir(parents=True, exist_ok=True)
 
@@ -90,15 +98,13 @@ def pull_backup(
     local_files = {p.name for p in backup_dir.glob("*")}
 
     try:
-        # Use simple list_objects_v2 for better test compatibility unless we want to rewrite many tests
-        response = s3.list_objects_v2(Bucket=bucket_name)
-        if "Contents" not in response:
-            if not response.get("KeyCount") or response.get("KeyCount") == 0:
-                console.print(f"No objects found in bucket {bucket_name}")
+        remote_versions = list(bucket.ls(recursive=True))
+        if not remote_versions:
+            console.print(f"No objects found in bucket {bucket_name}")
             return
 
-        for obj in response["Contents"]:
-            object_name = obj["Key"]
+        for file_version, _ in remote_versions:
+            object_name = file_version.file_name
             file_path = backup_dir / object_name
 
             if object_name in local_files:
@@ -106,14 +112,35 @@ def pull_backup(
                 continue
 
             if dry_run:
-                console.print(f"Would pull s3://{bucket_name}/{object_name} to {file_path}")
+                console.print(f"Would pull b2://{bucket_name}/{object_name} to {file_path}")
                 continue
 
             try:
-                console.print(f"Downloading s3://{bucket_name}/{object_name} to {file_path}...")
-                s3.download_file(bucket_name, object_name, str(file_path))
+                console.print(f"Downloading b2://{bucket_name}/{object_name} to {file_path}...")
+                download_dest = bucket.download_file_by_name(object_name)
+                download_dest.save_to(str(file_path))
                 console.print(f"[green]Successfully downloaded {object_name}[/]")
-            except ClientError as e:
-                console.print(f"[bold red]Failed to download {object_name}: {e}[/]", stderr=True)
-    except ClientError as e:
-        console.print(f"[bold red]Failed to sync with bucket {bucket_name}: {e}[/]", stderr=True)
+            except Exception as e:
+                console_stderr.print(f"[bold red]Failed to download {object_name}: {e}[/]")
+    except Exception as e:
+        console_stderr.print(f"[bold red]Failed to sync with bucket {bucket_name}: {e}[/]")
+
+
+def verify_cloud_connectivity(
+    bucket_name: str,
+    endpoint_url: str | None = None,
+    access_key: str | None = None,
+    secret_key: str | None = None,
+) -> bool:
+    """Verifies that the cloud bucket is accessible with the provided credentials."""
+    if not access_key or not secret_key:
+        return False
+    try:
+        bucket = _get_b2_bucket(access_key, secret_key, bucket_name)
+        # Try to list to verify access
+        for _ in bucket.ls(recursive=True):
+            break
+        return True
+    except Exception as e:
+        console_stderr.print(f"[bold red]Cloud verification failed for {bucket_name}: {e}[/]")
+        return False

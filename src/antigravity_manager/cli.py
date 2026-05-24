@@ -16,6 +16,7 @@ from .config import (
     GEMINI_HOME,
 )
 from .cooldown import evaluate_entries, format_remaining, print_statuses_table
+from .credentials import resolve_credentials
 from .doctor import print_doctor_table, run_doctor
 from .list_backups import list_backups, print_entries_table
 from .profile import export_profile, import_profile
@@ -31,13 +32,18 @@ from .status import (
     parse_live_status_text,
     status_to_dict,
 )
-from .sync import pull_backup, push_backup
-from .ui import console
+from .sync import pull_backup, push_backup, verify_cloud_connectivity
+from .ui import banner, console, print_rich_help
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agm", description="Manage Antigravity CLI accounts, backups, and cooldowns."
+        prog="agm",
+        description="Manage Antigravity CLI accounts, backups, and cooldowns.",
+        add_help=False,
+    )
+    parser.add_argument(
+        "-h", "--help", action="store_true", help="Show this help message and exit."
     )
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
@@ -91,6 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backup_parser.add_argument("--dry-run", action="store_true", help="Show what would be created.")
     backup_parser.add_argument("--force", action="store_true", help="Overwrite existing archive.")
+    backup_parser.add_argument("--encrypt", action="store_true", help="Encrypt the archive with GPG.")
     add_tmux_args(backup_parser)
 
     restore_parser = subparsers.add_parser("restore", help="Restore an Antigravity backup.")
@@ -268,13 +275,19 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Local backup directory."
     )
-    sync_parser.add_argument("--bucket-name", required=True, help="S3 bucket name.")
+    sync_parser.add_argument("--bucket-name", help="S3 bucket name.")
     sync_parser.add_argument("--endpoint-url", help="S3 endpoint URL.")
     sync_parser.add_argument("--access-key", help="S3 access key.")
     sync_parser.add_argument("--secret-key", help="S3 secret key.")
     sync_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would sync without doing it."
     )
+
+    check_cloud_parser = subparsers.add_parser("check-cloud", help="Verify cloud credentials.")
+    check_cloud_parser.add_argument("--bucket-name", help="S3 bucket name.")
+    check_cloud_parser.add_argument("--endpoint-url", help="S3 endpoint URL.")
+    check_cloud_parser.add_argument("--access-key", help="S3 access key.")
+    check_cloud_parser.add_argument("--secret-key", help="S3 secret key.")
 
     return parser
 
@@ -413,6 +426,7 @@ def handle_doctor(args: argparse.Namespace) -> None:
         antigravity_home=Path(args.source_dir).expanduser(),
         gemini_home=Path(args.gemini_home).expanduser(),
         backup_dir=Path(args.backup_dir).expanduser(),
+        args=args,
     )
     if args.json:
         console.print(
@@ -466,30 +480,64 @@ def handle_profile(args: argparse.Namespace) -> None:
 
 def handle_sync(args: argparse.Namespace) -> None:
     backup_dir = Path(args.backup_dir).expanduser()
+    access_key, secret_key, bucket_name, endpoint_url = resolve_credentials(args)
 
     if args.direction == "push":
         push_backup(
             backup_dir=backup_dir,
-            bucket_name=args.bucket_name,
-            endpoint_url=args.endpoint_url,
-            access_key=args.access_key,
-            secret_key=args.secret_key,
+            bucket_name=bucket_name,
+            endpoint_url=endpoint_url,
+            access_key=access_key,
+            secret_key=secret_key,
             dry_run=args.dry_run,
         )
     elif args.direction == "pull":
         pull_backup(
             backup_dir=backup_dir,
-            bucket_name=args.bucket_name,
-            endpoint_url=args.endpoint_url,
-            access_key=args.access_key,
-            secret_key=args.secret_key,
+            bucket_name=bucket_name,
+            endpoint_url=endpoint_url,
+            access_key=access_key,
+            secret_key=secret_key,
             dry_run=args.dry_run,
         )
 
 
+def handle_check_cloud(args: argparse.Namespace) -> None:
+    access_key, secret_key, bucket_name, endpoint_url = resolve_credentials(args)
+    if verify_cloud_connectivity(
+        bucket_name=bucket_name,
+        endpoint_url=endpoint_url,
+        access_key=access_key,
+        secret_key=secret_key,
+    ):
+        console.print(f"[bold green]Successfully verified cloud access to {bucket_name}[/]")
+    else:
+        sys.exit(1)
+
+
 def main() -> None:
+    # Handle main help manually to use Rich
+    if len(sys.argv) == 1 or (len(sys.argv) == 2 and sys.argv[1] in ["-h", "--help"]):
+        banner()
+        print_rich_help()
+        return
+
     parser = build_parser()
     args = parser.parse_args()
+
+    # Branded experience for major commands
+    if args.command in [
+        "backup",
+        "restore",
+        "sync",
+        "recommend",
+        "status",
+        "doctor",
+        "prune",
+        "list-backups",
+    ]:
+        if not getattr(args, "json", False):
+            banner()
 
     # Handle shortcuts and default command
     if args.status:
@@ -528,6 +576,7 @@ def main() -> None:
         "remove": handle_remove,
         "profile": handle_profile,
         "sync": handle_sync,
+        "check-cloud": handle_check_cloud,
     }
     try:
         handlers[args.command](args)

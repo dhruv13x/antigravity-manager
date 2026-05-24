@@ -19,6 +19,7 @@ Usage:
 
 from __future__ import annotations
 import argparse
+from .protected import copytree_excluding_protected, get_tar_excludes, get_diff_excludes
 import fcntl
 import json
 import os
@@ -166,7 +167,8 @@ def perform_backup(args: argparse.Namespace):
         print(f"[1/4] Creating archive: {archive_path}")
         if not args.dry_run:
             ensure_dir(archive_dir)
-            tar_cmd = f"tar -C {shlex_quote(actual_src)} -czf {shlex_quote(archive_path)} ."
+            tar_excludes = get_tar_excludes()
+            tar_cmd = f"tar -C {shlex_quote(actual_src)} {tar_excludes} -czf {shlex_quote(archive_path)} ."
             run(tar_cmd)
 
             # --- ENCRYPTION LOGIC ---
@@ -217,15 +219,19 @@ def perform_backup(args: argparse.Namespace):
         if not args.dry_run:
             if os.path.exists(tmp_dest):
                 shutil.rmtree(tmp_dest)
-            cp_cmd = f"cp -a {shlex_quote(actual_src)} {shlex_quote(tmp_dest)}"
-            run(cp_cmd)
+            try:
+                copytree_excluding_protected(actual_src, tmp_dest)
+            except FileNotFoundError:
+                cp_cmd = f"cp -a {shlex_quote(actual_src)} {shlex_quote(tmp_dest)}"
+                run(cp_cmd)
         else:
             print("DRY RUN: would cp -a ...")
 
         # 3) Verify copy with diff -r
         print("[3/4] Verifying copy with diff -r")
         if not args.dry_run:
-            diff_proc = run(f"diff -r {shlex_quote(actual_src)} {shlex_quote(tmp_dest)}", check=False, capture=True)
+            diff_excludes = get_diff_excludes()
+            diff_proc = run(f"diff -r {diff_excludes} {shlex_quote(actual_src)} {shlex_quote(tmp_dest)}", check=False, capture=True)
             if diff_proc.returncode != 0:
                 print("Verification FAILED: diff reported differences.")
                 if diff_proc.stdout:

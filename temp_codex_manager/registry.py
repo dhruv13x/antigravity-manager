@@ -1,155 +1,107 @@
-from __future__ import annotations
+#!/usr/bin/env python3
+# src/gemini_manager/registry.py
 
 import json
+import os
+from typing import Dict, Any, List, Optional
 from datetime import datetime
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
-from .config import COOLDOWN_REGISTRY_PATH
+from .config import REGISTRY_FILE, ACCOUNTS_DIR
+from .metadata import AccountState, SnapshotRecord, ResetRecord, latest_entity_by_email, load_local_states, load_local_snapshots
+from .ui import cprint, NEON_GREEN, NEON_RED, NEON_YELLOW
 
-if TYPE_CHECKING:
-    from .cloud import B2Provider
-
-
-def load_registry() -> dict[str, dict[str, Any]]:
-    if not COOLDOWN_REGISTRY_PATH.exists():
-        return {}
-    try:
-        return json.loads(COOLDOWN_REGISTRY_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def save_registry(data: dict[str, dict[str, Any]]) -> None:
-    COOLDOWN_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    COOLDOWN_REGISTRY_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-
-def merge_registries(
-    local: dict[str, dict[str, Any]], remote: dict[str, dict[str, Any]]
-) -> dict[str, dict[str, Any]]:
-    """Merge two registries using 'latest wins' based on updated_at."""
-    merged = local.copy()
-    for email, remote_entry in remote.items():
-        if email not in merged:
-            merged[email] = remote_entry
-        else:
-            local_entry = merged[email]
-            local_updated = local_entry.get("updated_at", "1970-01-01T00:00:00Z")
-            remote_updated = remote_entry.get("updated_at", "1970-01-01T00:00:00Z")
-            if remote_updated > local_updated:
-                merged[email] = remote_entry
-    return merged
-
-
-def sync_registry_with_cloud(cp: B2Provider, dry_run: bool = False) -> None:
-    """Download remote registry, merge with local, and upload the result."""
-    from .ui import console
-
-    remote_path = "cooldown.json"
-    local_data = load_registry()
-
-    # 1. Check if remote exists and merge if so
-    files = cp.list_files(prefix=remote_path)
-    remote_exists = any(f.name == remote_path for f in files)
-
-    if remote_exists:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir) / "remote_cooldown.json"
-            try:
-                cp.download_file(remote_path, tmp_path)
-                remote_data = json.loads(tmp_path.read_text(encoding="utf-8"))
-                local_data = merge_registries(local_data, remote_data)
-                if not dry_run:
-                    save_registry(local_data)
-                else:
-                    console.print("Would merge cloud registry with local registry")
-            except Exception as exc:
-                console.print(f"[yellow]Warning:[/] Failed to merge cloud registry: {exc}")
-
-    # 2. Upload the updated/merged local registry back to cloud
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "cooldown.json"
-        tmp_path.write_text(json.dumps(local_data, indent=2), encoding="utf-8")
-        try:
-            if not dry_run:
-                cp.upload_file(tmp_path, remote_path)
-                console.print("[green]Cloud registry synchronized.[/]")
-            else:
-                console.print(f"Would upload registry to cloud: {remote_path}")
-        except Exception as exc:
-            console.print(f"[yellow]Warning:[/] Failed to upload registry to cloud: {exc}")
-
-
-def upload_registry_to_cloud(cp: B2Provider, *, dry_run: bool = False) -> None:
-    """Upload the current local registry to cloud without performing a merge."""
-    from .ui import console
-    import tempfile
-
-    remote_path = "cooldown.json"
-    local_data = load_registry()
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "cooldown.json"
-        tmp_path.write_text(json.dumps(local_data, indent=2), encoding="utf-8")
-        try:
-            if not dry_run:
-                cp.upload_file(tmp_path, remote_path)
-                console.print("[green]Cloud registry updated.[/]")
-            else:
-                console.print(f"Would upload registry to cloud: {remote_path}")
-        except Exception as exc:
-            console.print(f"[yellow]Warning:[/] Failed to upload registry to cloud: {exc}")
-
-
-def update_registry_entry(
-    email: str,
-    *,
-    reset_at: datetime | str | None = None,
-    is_expired: bool | None = None,
-    quota_text: str | None = None,
-    quota_percent_left: int | None = None,
-    session_start_at: datetime | str | None = None,
-    dry_run: bool = False,
-) -> None:
-    registry = load_registry()
-    entry = registry.get(email, {})
-
-    if reset_at:
-        entry["reset_at"] = reset_at.isoformat() if hasattr(reset_at, "isoformat") else str(reset_at)
-    if is_expired is not None:
-        entry["is_expired"] = is_expired
-    if quota_text:
-        entry["quota_text"] = quota_text
-    if quota_percent_left is not None:
-        entry["quota_percent_left"] = quota_percent_left
-    if session_start_at:
-        entry["session_start_at"] = (
-            session_start_at.isoformat() if hasattr(session_start_at, "isoformat") else str(session_start_at)
-        )
+class RegistryManager:
+    """
+    Manages the 'Layer 2' Derived Index (registry.json).
+    This index provides fast lookups for fleet health but is derived from 
+    authoritative States and Snapshots.
+    """
     
-    entry["updated_at"] = datetime.now().astimezone().isoformat()
-    registry[email] = entry
-    if not dry_run:
-        save_registry(registry)
+    def __init__(self, path: str = REGISTRY_FILE):
+        self.path = os.path.abspath(os.path.expanduser(path))
+        self._data: Dict[str, Dict[str, Any]] = {}
+        self.load()
+
+    def load(self) -> None:
+        if not os.path.exists(self.path):
+            self._data = {}
+            return
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    self._data = data
+                else:
+                    self._data = {}
+        except Exception:
+            self._data = {}
+
+    def save(self) -> None:
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(self._data, f, indent=2, sort_keys=True)
+
+    def update_account(self, email: str, record: Dict[str, Any]) -> None:
+        """Update the index with new data for an account."""
+        email = email.lower()
+        # Merge or replace? For a derived index, we use the authoritative 'latest_entity' logic
+        existing = self._data.get(email, {})
+        
+        # Compose and pick the best
+        candidates = [existing, record]
+        refined = latest_entity_by_email([c for c in candidates if c])
+        
+        if email in refined:
+            self._data[email] = refined[email]
+            self.save()
+
+    def get_all(self) -> List[Dict[str, Any]]:
+        return list(self._data.values())
+
+    def get_for_email(self, email: str) -> Optional[Dict[str, Any]]:
+        return self._data.get(email.lower())
+
+    def reconstruct(self) -> None:
+        """
+        Authoritative reconstruction: rebuild index from decentralized state/snapshot files.
+        This fulfills the 'Layered Authority' mandate for reconstructability.
+        """
+        cprint(NEON_YELLOW, "[REGISTRY] Reconstructing index from authoritative files...")
+        
+        # 1. Load decentralized states
+        states = load_local_states()
+        
+        # 2. Load historical snapshots
+        snapshots = load_local_snapshots()
+        
+        # 3. Aggregate using authoritative ranking logic
+        all_records = states + snapshots
+        self._data = latest_entity_by_email(all_records)
+        self.save()
+        cprint(NEON_GREEN, f"[REGISTRY] Index rebuilt with {len(self._data)} accounts.")
+
+def get_registry() -> RegistryManager:
+    return RegistryManager()
+
+def sync_registry_with_cloud(provider, direction: str = "push") -> None:
+    """Synchronize the derived index with cloud storage."""
+    reg = get_registry()
+    remote_name = "gm-registry.json"
+    
+    if direction == "push":
+        reg.save() # Ensure latest local is saved
+        provider.upload_file(reg.path, remote_name)
     else:
-        from .ui import console
-        console.print(f"Would update registry entry for {email}")
-
-
-def get_registry_entry(email: str) -> dict[str, Any] | None:
-    return load_registry().get(email)
-
-
-def remove_registry_entry(email: str, dry_run: bool = False) -> bool:
-    registry = load_registry()
-    if email in registry:
-        if not dry_run:
-            del registry[email]
-            save_registry(registry)
-        return True
-    return False
+        # Pull and Merge
+        cloud_data_str = provider.download_to_string(remote_name)
+        if cloud_data_str:
+            try:
+                cloud_data = json.loads(cloud_data_str)
+                # Merge logic: latest entity wins
+                local_list = reg.get_all()
+                cloud_list = list(cloud_data.values())
+                merged = latest_entity_by_email(local_list + cloud_list)
+                reg._data = merged
+                reg.save()
+            except Exception as e:
+                cprint(NEON_RED, f"[REGISTRY] Failed to merge cloud index: {e}")

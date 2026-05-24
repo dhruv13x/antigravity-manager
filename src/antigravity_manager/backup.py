@@ -249,6 +249,43 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
         include_bin=getattr(args, "include_bin", False),
         include_logs=getattr(args, "include_logs", False),
     )
+
+    if getattr(args, "encrypt", False):
+        import getpass
+        import subprocess
+
+        console.print(f"Encrypting archive: {archive_path} -> .gpg")
+        passphrase = os.environ.get("AGM_BACKUP_PASSWORD")
+        if not passphrase:
+            passphrase = getpass.getpass("Enter passphrase for backup encryption: ")
+
+        if not passphrase:
+            raise ValueError("Encryption requested but no passphrase provided.")
+
+        encrypted_path = archive_path.with_suffix(archive_path.suffix + ".gpg")
+        gpg_cmd = [
+            "gpg",
+            "--symmetric",
+            "--cipher-algo",
+            "AES256",
+            "--passphrase-fd",
+            "0",
+            "--batch",
+            "--yes",
+            "--output",
+            str(encrypted_path),
+            str(archive_path),
+        ]
+        try:
+            subprocess.run(gpg_cmd, input=passphrase.encode(), check=True)
+            archive_path.unlink()
+            archive_path = encrypted_path
+            metadata["archive_name"] = archive_path.name
+            metadata["archive_path"] = str(archive_path)
+            metadata["encrypted"] = True
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise RuntimeError(f"GPG encryption failed: {e}")
+
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
     latest_path = backup_dir / f"{status.email}-latest-antigravity.tar.gz"

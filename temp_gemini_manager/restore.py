@@ -20,6 +20,7 @@ Behavior:
 """
 from __future__ import annotations
 import argparse
+from .protected import ProtectedPathManager, copytree_excluding_protected, get_diff_excludes, remove_protected_children
 import fcntl
 import os
 import shlex
@@ -520,8 +521,13 @@ def perform_restore(args: argparse.Namespace):
                 if not getattr(args, 'dry_run', False):
                     if os.path.exists(tmp_dest):
                         shutil.rmtree(tmp_dest)
-                    cp_cmd = f"cp -a {shlex_quote(src_for_copy)} {shlex_quote(tmp_dest)}"
-                    run(cp_cmd)
+                    try:
+                        copytree_excluding_protected(src_for_copy, tmp_dest)
+                    except FileNotFoundError:
+                        cp_cmd = f"cp -a {shlex_quote(src_for_copy)} {shlex_quote(tmp_dest)}"
+                        run(cp_cmd)
+                    if os.path.exists(tmp_dest):
+                        remove_protected_children(tmp_dest)
                 else:
                     print("DRY RUN: would cp -a ...")
 
@@ -529,7 +535,8 @@ def perform_restore(args: argparse.Namespace):
             if not auth_only:
                 print("Verifying copy with diff -r")
                 if not getattr(args, 'dry_run', False):
-                    diff_proc = run(f"diff -r {shlex_quote(tmp_dest)} {shlex_quote(src_for_copy)}", capture=True, check=False)
+                    diff_excludes = get_diff_excludes()
+                    diff_proc = run(f"diff -r {diff_excludes} {shlex_quote(tmp_dest)} {shlex_quote(src_for_copy)}", capture=True, check=False)
                     if diff_proc.returncode != 0:
                         print("Verification FAILED (diff shows differences):")
                         if diff_proc.stdout:
@@ -544,6 +551,10 @@ def perform_restore(args: argparse.Namespace):
             # Prepare swap: move existing dest to archive unless --force
             bakname = None
             if not auth_only and os.path.exists(dest):
+                protected_mgr = ProtectedPathManager(dest)
+                if not getattr(args, 'dry_run', False):
+                    protected_mgr.park_protected_paths()
+
                 if not args.force:
                     bak_filename = f"{ts_now}{email_label}.gemini-manager.bak"
                     bakname = os.path.join(OLD_CONFIGS_DIR, bak_filename)
@@ -592,7 +603,12 @@ def perform_restore(args: argparse.Namespace):
                                      os.remove(dest)
                              shutil.move(tmp_dest, dest)
                          else:
+                             if 'protected_mgr' in locals():
+                                 protected_mgr.cleanup()
                              raise e
+
+                    if 'protected_mgr' in locals():
+                        protected_mgr.restore_protected_paths()
                 else:
                     print("DRY RUN: would os.replace(tmp_dest, dest)")
 
@@ -600,7 +616,8 @@ def perform_restore(args: argparse.Namespace):
             if not auth_only:
                 if not getattr(args, 'dry_run', False):
                     print("Post-restore verification: diff -r between restored dest and source")
-                    diff2 = run(f"diff -r {shlex_quote(dest)} {shlex_quote(src_for_copy)}", capture=True, check=False)
+                    diff_excludes = get_diff_excludes()
+                    diff2 = run(f"diff -r {diff_excludes} {shlex_quote(dest)} {shlex_quote(src_for_copy)}", capture=True, check=False)
                     if diff2.returncode != 0:
                         print("Post-restore verification FAILED:")
                         if diff2.stdout:
@@ -608,7 +625,24 @@ def perform_restore(args: argparse.Namespace):
                         print("Attempting rollback (if possible).")
                         if not getattr(args, 'force', False) and bakname and os.path.exists(bakname):
                             try:
-                                os.replace(bakname, dest)
+                                if 'protected_mgr' in locals():
+                                    protected_mgr.park_protected_paths()
+                                try:
+                                    try:
+                                        os.replace(bakname, dest)
+                                    except OSError as e:
+                                        if e.errno in [16, 17, 18, 39]:
+                                            if os.path.exists(dest):
+                                                if os.path.isdir(dest) and not os.path.islink(dest):
+                                                    shutil.rmtree(dest)
+                                                else:
+                                                    os.remove(dest)
+                                            shutil.move(bakname, dest)
+                                        else:
+                                            raise
+                                finally:
+                                    if 'protected_mgr' in locals():
+                                        protected_mgr.restore_protected_paths()
                                 print("Rollback to previous copy succeeded.")
                             except Exception as e:
                                 print("Rollback failed:", e)
