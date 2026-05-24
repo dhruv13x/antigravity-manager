@@ -17,13 +17,16 @@ DIRECTORY_NAMES = [
     "tmp",
     ".tmp",
     "history",
-    "cache",
     "log",
     "sessions",
     "brain",
     "conversations",
     "implicit",
 ]
+
+CACHE_PRESERVED_NAMES = {
+    "onboarding.json",
+}
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,12 @@ def build_prune_plan(source_dir: Path) -> PrunePlan:
         path = source_dir / name
         if path.exists():
             directories.append(path)
+
+    cache_path = source_dir / "cache"
+    if cache_path.exists() and any(
+        item.name not in CACHE_PRESERVED_NAMES for item in cache_path.iterdir()
+    ):
+        directories.append(cache_path)
 
     return PrunePlan(files=files, directories=directories)
 
@@ -75,7 +84,7 @@ def perform_prune(args: Any) -> PrunePlan:
                     continue
             elif path.name == "cache":
                 for item in path.iterdir():
-                    if item.name == "onboarding.json":
+                    if item.name in CACHE_PRESERVED_NAMES:
                         continue
                     if item.is_dir():
                         shutil.rmtree(item)

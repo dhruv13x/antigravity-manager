@@ -1,8 +1,11 @@
 from antigravity_manager.prune import perform_prune, prune_result_to_text
+
+
 class DummyArgs:
     def __init__(self, sd, dr):
         self.source_dir = sd
         self.dry_run = dr
+
 
 def test_prune(tmp_path):
     (tmp_path / "log").mkdir()
@@ -37,7 +40,7 @@ def test_prune_preserves_credentials_and_targets_new_dirs(tmp_path):
     id_file.touch()
 
     args = DummyArgs(str(tmp_path), False)
-    plan = perform_prune(args)
+    perform_prune(args)
 
     # Check targets were pruned
     assert not (tmp_path / "brain").exists()
@@ -52,4 +55,8 @@ def test_prune_preserves_credentials_and_targets_new_dirs(tmp_path):
     assert token_file.exists()
     assert settings_file.exists()
     assert id_file.exists()
+    assert (tmp_path / "cache" / "onboarding.json").exists()
+
+    second_plan = perform_prune(args)
+    assert tmp_path / "cache" not in second_plan.directories
     assert (tmp_path / "cache" / "onboarding.json").exists()
