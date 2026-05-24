@@ -227,6 +227,9 @@ def build_parser() -> argparse.ArgumentParser:
     purge_parser = subparsers.add_parser("purge", help="Purge caches.")
     purge_parser.add_argument("--source-dir", default=str(ANTIGRAVITY_HOME), help="Antigravity CLI directory.")
     purge_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed.")
+    purge_parser = subparsers.add_parser("purge", help="Purge caches.")
+    purge_parser.add_argument("--source-dir", default=str(ANTIGRAVITY_HOME), help="Antigravity CLI directory.")
+    purge_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed.")
     purge_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation.")
     purge_parser.set_defaults(command="purge")
 
