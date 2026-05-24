@@ -45,4 +45,5 @@ def import_profile(import_path: Path, dry_run: bool = False) -> None:
 
     with tarfile.open(import_path, "r:gz") as tar:
         # Extract into parent directory since the archive contains the root folder
-        tar.extractall(path=AGM_HOME.parent, filter="data")
+        AGM_HOME.mkdir(parents=True, exist_ok=True)
+        tar.extractall(path=AGM_HOME, filter="data")
