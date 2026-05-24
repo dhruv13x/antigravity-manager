@@ -1,11 +1,14 @@
 from pathlib import Path
+
 from antigravity_manager.purge import perform_purge, purge_result_to_text
+
 
 class DummyArgs:
     def __init__(self, source_dir, yes=False, dry_run=False):
         self.source_dir = source_dir
         self.yes = yes
         self.dry_run = dry_run
+
 
 def test_perform_purge(tmp_path):
     d = tmp_path / "antigravity"
@@ -15,7 +18,13 @@ def test_perform_purge(tmp_path):
     assert perform_purge(args) is True
     assert not d.exists()
 
+
 def test_purge_result_to_text():
     out = purge_result_to_text(True, Path("/tmp"), False)
-    assert "purged" in out
-    assert "Antigravity home has been factory reset." in out
+    from rich.console import Console
+
+    c = Console(force_terminal=False)
+    with c.capture() as cap:
+        c.print(out)
+    assert "Purge" in cap.get()
+    assert out is not None

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -67,11 +66,14 @@ def push_backup(
             continue
 
         try:
-            console.print(f"Uploading {file_path.name} to b2://{bucket_name}/{object_name}...")
-            bucket.upload_local_file(local_file=str(file_path), file_name=object_name)
-            console.print(f"[green]Successfully uploaded {file_path.name}[/]")
+            with console.status(
+                f"[cyan]Uploading {file_path.name} to b2://{bucket_name}/{object_name}...[/cyan]",
+                spinner="dots",
+            ):
+                bucket.upload_local_file(local_file=str(file_path), file_name=object_name)
+            console.print(f"[green]✓ Successfully uploaded {file_path.name}[/]")
         except Exception as e:
-            console_stderr.print(f"[bold red]Failed to upload {file_path.name}: {e}[/]")
+            console_stderr.print(f"[bold red]✗ Failed to upload {file_path.name}: {e}[/]")
 
 
 def pull_backup(
@@ -116,12 +118,15 @@ def pull_backup(
                 continue
 
             try:
-                console.print(f"Downloading b2://{bucket_name}/{object_name} to {file_path}...")
-                download_dest = bucket.download_file_by_name(object_name)
-                download_dest.save_to(str(file_path))
-                console.print(f"[green]Successfully downloaded {object_name}[/]")
+                with console.status(
+                    f"[cyan]Downloading b2://{bucket_name}/{object_name} to {file_path}...[/cyan]",
+                    spinner="dots",
+                ):
+                    download_dest = bucket.download_file_by_name(object_name)
+                    download_dest.save_to(str(file_path))
+                console.print(f"[green]✓ Successfully downloaded {object_name}[/]")
             except Exception as e:
-                console_stderr.print(f"[bold red]Failed to download {object_name}: {e}[/]")
+                console_stderr.print(f"[bold red]✗ Failed to download {object_name}: {e}[/]")
     except Exception as e:
         console_stderr.print(f"[bold red]Failed to sync with bucket {bucket_name}: {e}[/]")
 

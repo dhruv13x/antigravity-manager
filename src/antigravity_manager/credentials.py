@@ -17,7 +17,7 @@ def load_env_file(path: str) -> dict[str, str]:
         return {}
     env = {}
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
@@ -68,11 +68,15 @@ def fetch_doppler_secrets(token: str) -> dict[str, Any] | None:
                 f"[yellow]Warning:[/] Found DOPPLER_TOKEN but failed to fetch secrets (Status: {response.status_code})."
             )
     except Exception as e:
-        console_stderr.print(f"[yellow]Warning:[/] Found DOPPLER_TOKEN but failed to connect to Doppler: {e}")
+        console_stderr.print(
+            f"[yellow]Warning:[/] Found DOPPLER_TOKEN but failed to connect to Doppler: {e}"
+        )
     return None
 
 
-def resolve_credentials(args: Any, allow_fail: bool = False) -> tuple[str | None, str | None, str | None, str | None]:
+def resolve_credentials(
+    args: Any, allow_fail: bool = False
+) -> tuple[str | None, str | None, str | None, str | None]:
     """
     Resolve B2/S3 credentials (key_id, app_key, bucket_name, endpoint_url) with the following priority:
     1. CLI Arguments
@@ -95,16 +99,20 @@ def resolve_credentials(args: Any, allow_fail: bool = False) -> tuple[str | None
         # Try AGM_B2 first
         if not c_id:
             c_id = source_dict.get("AGM_B2_KEY_ID") or source_dict.get("AWS_ACCESS_KEY_ID")
-            if c_id: updated = True
+            if c_id:
+                updated = True
         if not c_key:
             c_key = source_dict.get("AGM_B2_APP_KEY") or source_dict.get("AWS_SECRET_ACCESS_KEY")
-            if c_key: updated = True
+            if c_key:
+                updated = True
         if not c_bucket:
             c_bucket = source_dict.get("AGM_B2_BUCKET") or source_dict.get("AWS_BUCKET_NAME")
-            if c_bucket: updated = True
+            if c_bucket:
+                updated = True
         if not c_endpoint:
             c_endpoint = source_dict.get("AGM_B2_ENDPOINT") or source_dict.get("AWS_ENDPOINT_URL")
-            if c_endpoint: updated = True
+            if c_endpoint:
+                updated = True
         return updated
 
     # 2. Doppler
@@ -136,7 +144,9 @@ def resolve_credentials(args: Any, allow_fail: bool = False) -> tuple[str | None
     console_stderr.print("[bold red]Error:[/] Missing B2/S3 credentials or bucket name.")
     console_stderr.print("Please provide credentials via any of these methods:")
     console_stderr.print("  1. Doppler (DOPPLER_TOKEN in env/doppler.env/.env)")
-    console_stderr.print("  2. Environment Variables (AGM_B2_KEY_ID, AGM_B2_APP_KEY, AGM_B2_BUCKET)")
+    console_stderr.print(
+        "  2. Environment Variables (AGM_B2_KEY_ID, AGM_B2_APP_KEY, AGM_B2_BUCKET)"
+    )
     console_stderr.print("  3. .env file in current directory")
     console_stderr.print("  4. CLI flags (--access-key, --secret-key, --bucket-name)")
     sys.exit(1)

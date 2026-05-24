@@ -1,7 +1,8 @@
-from antigravity_manager.registry import save_registry, load_registry, update_registry_from_status
-from antigravity_manager.status import LiveStatus
-from antigravity_manager.config import COOLDOWN_REGISTRY_PATH
 from datetime import datetime
+
+from antigravity_manager.registry import load_registry, save_registry, update_registry_from_status
+from antigravity_manager.status import LiveStatus
+
 
 def test_registry(tmp_path, monkeypatch):
     rpath = tmp_path / "r.json"

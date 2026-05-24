@@ -6,6 +6,9 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from rich.console import Group
+from rich.text import Text
+
 from . import __version__
 from .backup import backup_result_to_text, perform_backup
 from .config import (
@@ -33,7 +36,14 @@ from .status import (
     status_to_dict,
 )
 from .sync import pull_backup, push_backup, verify_cloud_connectivity
-from .ui import banner, console, error_console, print_rich_help
+from .ui import (
+    Panel,
+    banner,
+    console,
+    error_console,
+    print_rich_help,
+    render_dict_as_table,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -97,7 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backup_parser.add_argument("--dry-run", action="store_true", help="Show what would be created.")
     backup_parser.add_argument("--force", action="store_true", help="Overwrite existing archive.")
-    backup_parser.add_argument("--encrypt", action="store_true", help="Encrypt the archive with GPG.")
+    backup_parser.add_argument(
+        "--encrypt", action="store_true", help="Encrypt the archive with GPG."
+    )
     add_tmux_args(backup_parser)
 
     restore_parser = subparsers.add_parser("restore", help="Restore an Antigravity backup.")
@@ -380,22 +392,40 @@ def handle_recommend(args: argparse.Namespace) -> None:
     if args.json:
         console.print(json.dumps(asdict(selected), indent=2, default=str), markup=False)
     else:
-        console.print(
-            "\n".join(
-                [
-                    f"email: {selected.email}",
-                    f"status: {selected.status}",
-                    f"decision_model: {selected.decision_model}",
-                    (
-                        "decision_model_available: "
-                        f"{selected.decision_model_status.is_available if selected.decision_model_status else 'unknown'}"
-                    ),
-                    (f"available_in: {format_remaining(selected.remaining_seconds)}"),
-                    f"all_models: {selected.available_models}/{selected.total_models}",
-                    f"source: {selected.source}",
-                ]
-            )
+        data = {
+            "Account": f"[bold bright_cyan]{selected.email}[/]",
+            "Status": "[bold bright_green]READY[/]"
+            if selected.status == "ready"
+            else "[bold bright_yellow]COOLDOWN[/]",
+            "Decision Model": selected.decision_model,
+            "Decision Status": "[bold bright_green]Available[/]"
+            if (selected.decision_model_status and selected.decision_model_status.is_available)
+            else "[bold bright_yellow]Cooldown[/]",
+            "Available In": format_remaining(selected.remaining_seconds),
+            "Available Models": f"{selected.available_models} / {selected.total_models}",
+            "Source": selected.source,
+        }
+
+        table = render_dict_as_table(data)
+
+        models_text = Text("\nModel Statuses:\n", style="bold cyan")
+        for model in selected.models:
+            models_text.append(f"  {model.name}: ", style="white")
+            if model.is_available:
+                models_text.append("Ready\n", style="bold green")
+            else:
+                from .cooldown import format_remaining as fr
+
+                rem = fr(model.remaining_seconds)
+                models_text.append(f"in {rem}\n", style="yellow")
+
+        panel = Panel(
+            Group(table, models_text),
+            title="[bold magenta]Recommendation[/]",
+            border_style="magenta",
+            expand=False,
         )
+        console.print(panel)
     if args.use:
         args.email = selected.email
         args.full = False
@@ -485,7 +515,7 @@ def handle_sync(args: argparse.Namespace) -> None:
     if args.direction == "push":
         push_backup(
             backup_dir=backup_dir,
-            bucket_name=bucket_name,
+            bucket_name=bucket_name or "",
             endpoint_url=endpoint_url,
             access_key=access_key,
             secret_key=secret_key,
@@ -494,7 +524,7 @@ def handle_sync(args: argparse.Namespace) -> None:
     elif args.direction == "pull":
         pull_backup(
             backup_dir=backup_dir,
-            bucket_name=bucket_name,
+            bucket_name=bucket_name or "",
             endpoint_url=endpoint_url,
             access_key=access_key,
             secret_key=secret_key,
@@ -505,7 +535,7 @@ def handle_sync(args: argparse.Namespace) -> None:
 def handle_check_cloud(args: argparse.Namespace) -> None:
     access_key, secret_key, bucket_name, endpoint_url = resolve_credentials(args)
     if verify_cloud_connectivity(
-        bucket_name=bucket_name,
+        bucket_name=bucket_name or "",
         endpoint_url=endpoint_url,
         access_key=access_key,
         secret_key=secret_key,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tarfile
 import tempfile
 from datetime import datetime, timedelta
@@ -16,6 +17,7 @@ from .config import (
 )
 from .registry import update_registry_from_status
 from .status import LiveStatus, capture_tmux_status_text, parse_live_status_text, status_to_dict
+from .ui import Panel, console, render_dict_as_table
 from .utils import build_archive_name, isoformat_local
 
 ESTIMATED_MODEL_RESET_HOURS = 5
@@ -284,7 +286,7 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
             metadata["archive_path"] = str(archive_path)
             metadata["encrypted"] = True
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            raise RuntimeError(f"GPG encryption failed: {e}")
+            raise RuntimeError(f"GPG encryption failed: {e}") from e
 
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -298,16 +300,25 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
 
 def backup_result_to_text(
     archive_path: Path, metadata_path: Path, metadata: dict[str, Any], *, dry_run: bool
-) -> str:
-    return "\n".join(
-        [
-            f"mode: {'dry-run' if dry_run else 'created'}",
-            f"archive: {archive_path}",
-            f"metadata: {metadata_path}",
-            f"email: {metadata.get('email', 'unknown')}",
-            f"plan: {metadata.get('plan', 'unknown')}",
-            f"next_available_at: {metadata.get('next_available_at', 'unknown')}",
-            f"backup_anchor: {metadata.get('backup_anchor_at', 'unknown')} ({metadata.get('backup_anchor_source', 'unknown')})",
-            f"backup_mode: {metadata.get('backup_mode', 'unknown')}",
-        ]
+) -> Panel:
+    title = (
+        "[bold yellow]Dry Run: Backup Plan[/]"
+        if dry_run
+        else "[bold bright_green]Backup Created[/]"
+    )
+
+    data = {
+        "Archive Path": str(archive_path),
+        "Metadata Path": str(metadata_path),
+        "Email": metadata.get("email", "unknown"),
+        "Plan": metadata.get("plan", "unknown"),
+        "Next Available At": metadata.get("next_available_at", "unknown"),
+        "Backup Anchor": f"{metadata.get('backup_anchor_at', 'unknown')} ({metadata.get('backup_anchor_source', 'unknown')})",
+        "Backup Mode": metadata.get("backup_mode", "unknown"),
+    }
+
+    table = render_dict_as_table(data)
+
+    return Panel(
+        table, title=title, border_style="yellow" if dry_run else "bright_green", expand=False
     )

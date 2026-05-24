@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any
 import json
 import tarfile
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from antigravity_manager.backup import perform_backup, resolve_backup_anchor
 from antigravity_manager.restore import perform_restore

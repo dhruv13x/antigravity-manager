@@ -1,7 +1,5 @@
-import tarfile
-from pathlib import Path
 from antigravity_manager.profile import export_profile, import_profile
-from antigravity_manager.config import AGM_HOME
+
 
 def test_export_import_profile(tmp_path, monkeypatch):
     test_home = tmp_path / "antigravity_manager"

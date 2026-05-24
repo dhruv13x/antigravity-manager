@@ -1,4 +1,18 @@
-from pathlib import Path
+with open("tests/test_remove.py", "r") as f:
+    content = f.read()
+
+content = content.replace("registry.clear()\n        registry.update(reg)", "registry.clear()\n        registry.update(reg)")
+
+# The logic of `perform_remove` is:
+# registry = load_registry()
+# if email in registry:
+#     del registry[email]
+#     save_registry(registry)
+
+# If registry is already updated by python dict reference, and we update it again with the same dictionary after clearing it.
+# Actually, the actual application does `del registry[email]` which mutates the dictionary, then saves it.
+# Let's fix test_remove.py.
+new_test_remove = """from pathlib import Path
 from antigravity_manager.remove import perform_remove, remove_result_to_text
 from antigravity_manager.registry import save_registry, load_registry
 
@@ -39,3 +53,6 @@ def test_remove_result_to_text():
     }
     out = remove_result_to_text(results, "user@example.com", False)
     assert out is not None
+"""
+with open("tests/test_remove.py", "w") as f:
+    f.write(new_test_remove)

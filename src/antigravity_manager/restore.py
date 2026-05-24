@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tarfile
 import tempfile
@@ -15,6 +16,7 @@ from .config import (
     SAFETY_BACKUP_DIR,
 )
 from .list_backups import list_backups, load_metadata_for_archive
+from .ui import Panel, render_dict_as_table
 from .utils import safe_label
 
 
@@ -92,7 +94,7 @@ def safe_extract(archive_path: Path, dest_dir: Path) -> None:
                         validate_member_name(member.name)
                     tar.extractall(dest_dir, filter="data")
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                raise RuntimeError(f"GPG decryption failed: {e}")
+                raise RuntimeError(f"GPG decryption failed: {e}") from e
     else:
         with tarfile.open(archive_path, "r:gz") as tar:
             for member in tar.getmembers():
@@ -250,17 +252,38 @@ def restore_result_to_text(
     *,
     dry_run: bool,
     full: bool,
-) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'restored'}",
-        f"restore_type: {'full' if full else 'auth-only'}",
-        f"archive: {archive_path}",
-        f"email: {metadata.get('email', 'unknown')}",
-        f"plan: {metadata.get('plan', 'unknown')}",
-    ]
+) -> Panel:
+    title = (
+        "[bold yellow]Dry Run: Restore Plan[/]"
+        if dry_run
+        else "[bold bright_green]Restore Completed[/]"
+    )
+
+    data = {
+        "Archive": str(archive_path),
+        "Restore Type": "full" if full else "auth-only",
+        "Email": metadata.get("email", "unknown"),
+        "Plan": metadata.get("plan", "unknown"),
+    }
     if safety_path:
-        lines.append(f"safety_backup: {safety_path}")
+        data["Safety Backup"] = str(safety_path)
+
+    table = render_dict_as_table(data)
+
+    from rich.console import Group
+    from rich.text import Text
+
+    renderables = [table]
+
     if restored_files:
-        lines.append("restored_files:")
-        lines.extend(f"  - {path}" for path in restored_files)
-    return "\n".join(lines)
+        files_text = Text("\nRestored Files:\n", style="bold cyan")
+        for path in restored_files:
+            files_text.append(f"  ✓ {path.name}\n", style="bright_green")
+        renderables.append(files_text)
+
+    return Panel(
+        Group(*renderables),
+        title=title,
+        border_style="yellow" if dry_run else "bright_green",
+        expand=False,
+    )

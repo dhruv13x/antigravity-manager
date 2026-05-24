@@ -1,8 +1,11 @@
 from antigravity_manager.prune import perform_prune, prune_result_to_text
+
+
 class DummyArgs:
     def __init__(self, sd, dr):
         self.source_dir = sd
         self.dry_run = dr
+
 
 def test_prune(tmp_path):
     (tmp_path / "log").mkdir()
@@ -13,7 +16,12 @@ def test_prune(tmp_path):
     assert len(plan.directories) == 1
 
     out = prune_result_to_text(plan, dry_run=False)
-    assert "log" in out
+    from rich.console import Console
+
+    c = Console(force_terminal=False)
+    with c.capture() as cap:
+        c.print(out)
+    assert "log" in cap.get()
 
 
 def test_prune_preserves_credentials_and_targets_new_dirs(tmp_path):

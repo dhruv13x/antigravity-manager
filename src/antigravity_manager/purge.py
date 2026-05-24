@@ -4,7 +4,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .ui import Confirm, console
+from rich.console import Group
+from rich.text import Text
+
+from .ui import Confirm, Panel, console, render_dict_as_table
 
 
 def perform_purge(args: Any) -> bool:
@@ -40,17 +43,37 @@ def perform_purge(args: Any) -> bool:
         return False
 
 
-def purge_result_to_text(success: bool, source_dir: Path, dry_run: bool) -> str:
+def purge_result_to_text(success: bool, source_dir: Path, dry_run: bool) -> Panel | str:
     if not success and not dry_run:
-        return "Purge failed or was cancelled."
+        return Panel(
+            "[bold red]Purge failed or was cancelled.[/]",
+            title="[bold red]Purge[/]",
+            border_style="red",
+            expand=False,
+        )
 
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'purged'}",
-        f"source_dir: {source_dir}",
-        f"status: {'SUCCESS' if success else 'SKIPPED'}",
-    ]
+    title = (
+        "[bold yellow]Dry Run: Purge Plan[/]" if dry_run else "[bold bright_red]Purge Completed[/]"
+    )
+
+    data = {
+        "Source Dir": str(source_dir),
+        "Status": "[bold bright_green]SUCCESS[/]" if success else "[bold yellow]SKIPPED[/]",
+    }
+
+    table = render_dict_as_table(data)
+    renderables = [table]
+
     if success and not dry_run:
-        lines.append("\n[bold green]Antigravity home has been factory reset.[/]")
-        lines.append("Next time you run Antigravity, it will treat it as a first-time setup.")
+        text = Text("\nAntigravity home has been factory reset.\n", style="bold green")
+        text.append(
+            "Next time you run Antigravity, it will treat it as a first-time setup.", style="dim"
+        )
+        renderables.append(text)
 
-    return "\n".join(lines)
+    return Panel(
+        Group(*renderables),
+        title=title,
+        border_style="yellow" if dry_run else "bright_red",
+        expand=False,
+    )

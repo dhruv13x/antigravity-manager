@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from rich.console import Group
+from rich.text import Text
+
+from .ui import Panel, render_dict_as_table
+
 FILE_GLOBS = [
     "logs.json",
     "history.jsonl",
@@ -87,15 +92,37 @@ def perform_prune(args: Any) -> PrunePlan:
     return plan
 
 
-def prune_result_to_text(plan: PrunePlan, *, dry_run: bool, source_dir: Path | None = None) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'pruned'}",
-    ]
+def prune_result_to_text(
+    plan: PrunePlan, *, dry_run: bool, source_dir: Path | None = None
+) -> Panel:
+    title = (
+        "[bold yellow]Dry Run: Prune Plan[/]"
+        if dry_run
+        else "[bold bright_green]Prune Completed[/]"
+    )
+
+    data: dict[str, Any] = {}
     if source_dir is not None:
-        lines.append(f"source_dir: {source_dir}")
-    lines.append(f"files_removed: {len(plan.files)}")
-    lines.extend(f"file: {path}" for path in plan.files)
-    lines.append(f"directories_removed: {len(plan.directories)}")
-    lines.extend(f"dir: {path}" for path in plan.directories)
-    lines.append("preserved: authentication and persistent state")
-    return "\n".join(lines)
+        data["Source Dir"] = str(source_dir)
+
+    data["Files Removed"] = str(len(plan.files))
+    data["Directories Removed"] = str(len(plan.directories))
+    data["Preserved"] = "Authentication and persistent state"
+
+    table = render_dict_as_table(data)
+    renderables = [table]
+
+    if plan.files or plan.directories:
+        details = Text("\nDetails:\n", style="bold cyan")
+        for path in plan.files:
+            details.append(f"  - {path}\n", style="dim")
+        for path in plan.directories:
+            details.append(f"  - {path}/\n", style="dim")
+        renderables.append(details)
+
+    return Panel(
+        Group(*renderables),
+        title=title,
+        border_style="yellow" if dry_run else "bright_green",
+        expand=False,
+    )

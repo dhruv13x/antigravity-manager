@@ -3,8 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from rich.console import Group
+from rich.text import Text
+
 from .registry import load_registry, save_registry
-from .ui import Confirm, console
+from .ui import Confirm, Panel, console, render_dict_as_table
 
 
 def perform_remove(args: Any) -> dict[str, Any]:
@@ -25,9 +28,7 @@ def perform_remove(args: Any) -> dict[str, Any]:
     if backup_dir.exists():
         for p in backup_dir.glob("*"):
             is_match = f"-{email}-" in p.name or p.name.startswith(f"{email}-latest-")
-            if is_match and (
-                p.name.endswith(".tar.gz") or p.name.endswith(".metadata.json")
-            ):
+            if is_match and (p.name.endswith(".tar.gz") or p.name.endswith(".metadata.json")):
                 local_files.append(p)
 
     # 3. Confirmation
@@ -58,18 +59,33 @@ def perform_remove(args: Any) -> dict[str, Any]:
     return results
 
 
-def remove_result_to_text(results: dict[str, Any], email: str, dry_run: bool) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'removed'}",
-        f"email: {email}",
-    ]
-
-    lines.append(f"local_files_removed: {len(results['local_files_removed'])}")
-    for f in results["local_files_removed"]:
-        lines.append(f"  - {f}")
-
-    lines.append(
-        f"local_registry_removed: {'YES' if results['local_registry_removed'] else 'NO (not found)'}"
+def remove_result_to_text(results: dict[str, Any], email: str, dry_run: bool) -> Panel:
+    title = (
+        "[bold yellow]Dry Run: Remove Plan[/]"
+        if dry_run
+        else "[bold bright_green]Remove Completed[/]"
     )
 
-    return "\n".join(lines)
+    data = {
+        "Email": email,
+        "Local Files Removed": str(len(results.get("local_files_removed", []))),
+        "Local Registry Removed": "[bold bright_green]YES[/]"
+        if results.get("local_registry_removed")
+        else "[dim]NO (not found)[/]",
+    }
+
+    table = render_dict_as_table(data)
+    renderables = [table]
+
+    if results.get("local_files_removed"):
+        details = Text("\nFiles Removed:\n", style="bold cyan")
+        for file in results["local_files_removed"]:
+            details.append(f"  - {file}\n", style="dim")
+        renderables.append(details)
+
+    return Panel(
+        Group(*renderables),
+        title=title,
+        border_style="yellow" if dry_run else "bright_green",
+        expand=False,
+    )

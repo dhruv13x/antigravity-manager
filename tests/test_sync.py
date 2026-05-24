@@ -1,17 +1,21 @@
-import pytest
 from pathlib import Path
-from antigravity_manager.sync import push_backup, pull_backup
+
+from antigravity_manager.sync import pull_backup, push_backup
+
 
 class DummyFileVersion:
     def __init__(self, name, size):
         self.file_name = name
         self.size = size
 
+
 class DummyDownloadDest:
     def __init__(self, key):
         self.key = key
+
     def save_to(self, path):
         Path(path).write_bytes(b"dummy")
+
 
 class DummyB2Bucket:
     def __init__(self, objects):
@@ -29,6 +33,7 @@ class DummyB2Bucket:
         self.downloaded.append(file_name)
         return DummyDownloadDest(file_name)
 
+
 def test_push_backup(tmp_path, monkeypatch):
     bdir = tmp_path / "backups"
     bdir.mkdir()
@@ -42,6 +47,7 @@ def test_push_backup(tmp_path, monkeypatch):
 
     assert len(bucket.uploaded) == 1
     assert bucket.uploaded[0][1] == "test.tar.gz"
+
 
 def test_pull_backup(tmp_path, monkeypatch):
     bdir = tmp_path / "backups"

@@ -1,21 +1,23 @@
+import math
+
 from rich.console import Console
 from rich.text import Text
-import math
-import random
-import shutil
 
 console = Console()
+
 
 def lerp(a, b, t):
     return a + (b - a) * t
 
+
 def blend(c1, c2, t):
-    t = t ** 1.47
+    t = t**1.47
     t = 0.82 * t + 0.08 * math.sin(3.2 * t)
     r = int(lerp(c1[0], c2[0], t))
     g = int(lerp(c1[1], c2[1], t))
     b = int(lerp(c1[2], c2[2], t))
     return f"#{r:02x}{g:02x}{b:02x}"
+
 
 def print_logo():
     logo = r"""
@@ -40,7 +42,7 @@ def print_logo():
         tline = Text()
         W = len(line)
         for j, ch in enumerate(line):
-            raw = (i * 0.72 + j * 0.44)
+            raw = i * 0.72 + j * 0.44
             t = raw / (H * 0.72 + W * 0.44)
             seg = t * (len(palette) - 1)
             idx = int(seg)
@@ -50,4 +52,6 @@ def print_logo():
             tline.append(ch, style=blend(c1, c2, t2))
         console.print(tline)
 
-    console.print("[dim]🌌 Powerful CLI interface for managing Antigravity accounts and backups.[/dim]\n")
+    console.print(
+        "[dim]🌌 Powerful CLI interface for managing Antigravity accounts and backups.[/dim]\n"
+    )
