@@ -251,16 +251,28 @@ def restore_result_to_text(
     dry_run: bool,
     full: bool,
 ) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'restored'}",
-        f"restore_type: {'full' if full else 'auth-only'}",
-        f"archive: {archive_path}",
-        f"email: {metadata.get('email', 'unknown')}",
-        f"plan: {metadata.get('plan', 'unknown')}",
-    ]
+    from .ui import Table, print_panel
+    import json
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Property", style="info")
+    table.add_column("Value", style="muted")
+
+    table.add_row("Mode", "[warning]DRY RUN[/]" if dry_run else "[success]RESTORED[/]")
+    table.add_row("Restore Type", "FULL" if full else "AUTH-ONLY")
+    table.add_row("Archive", str(archive_path))
+    table.add_row("Email", metadata.get("email", "unknown"))
+    table.add_row("Plan", metadata.get("plan", "unknown"))
+
     if safety_path:
-        lines.append(f"safety_backup: {safety_path}")
+        table.add_row("Safety Backup", str(safety_path))
+
+    print_panel(table, title="Restore Result", style="success")
+
     if restored_files:
-        lines.append("restored_files:")
-        lines.extend(f"  - {path}" for path in restored_files)
-    return "\n".join(lines)
+        from .ui import print_info
+        print_info("Restored files:")
+        for path in restored_files:
+            print_info(f"  - {path}")
+
+    return ""

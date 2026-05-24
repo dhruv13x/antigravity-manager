@@ -5,11 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from b2sdk.v2 import B2Api, InMemoryAccountInfo
-from rich.console import Console
-
-from .ui import console
-
-console_stderr = Console(stderr=True)
+from .ui import console, print_error, print_success, print_info, create_progress_bar
 
 
 def _get_b2_bucket(key_id: str, app_key: str, bucket_name: str) -> Any:
@@ -28,13 +24,13 @@ def push_backup(
     dry_run: bool = False,
 ) -> None:
     if not access_key or not secret_key:
-        console_stderr.print("[bold red]Missing B2 credentials (KEY_ID or APP_KEY).[/]")
+        print_error("Missing B2 credentials (KEY_ID or APP_KEY).")
         return
 
     try:
         bucket = _get_b2_bucket(access_key, secret_key, bucket_name)
     except Exception as e:
-        console_stderr.print(f"[bold red]Failed to connect to B2 bucket {bucket_name}: {e}[/]")
+        print_error(f"Failed to connect to B2 bucket {bucket_name}: {e}")
         return
 
     # Fetch remote state
@@ -43,7 +39,7 @@ def push_backup(
         for file_version, _ in bucket.ls(recursive=True):
             remote_files[file_version.file_name] = file_version.size
     except Exception as e:
-        console_stderr.print(f"[bold red]Failed to list remote bucket {bucket_name}: {e}[/]")
+        print_error(f"Failed to list remote bucket {bucket_name}: {e}")
         return
 
     # Push all tar.gz and metadata.json files
@@ -59,19 +55,22 @@ def push_backup(
 
         # Check if file exists and has the same size
         if object_name in remote_files and remote_files[object_name] == file_path.stat().st_size:
-            console.print(f"Skipping {file_path.name}, already exists in cloud with same size.")
+            print_info(f"Skipping [cyan]{file_path.name}[/], already exists in cloud with same size.")
             continue
 
         if dry_run:
-            console.print(f"Would push {file_path.name} to b2://{bucket_name}/{object_name}")
+            print_info(f"Would push [cyan]{file_path.name}[/] to b2://{bucket_name}/{object_name}")
             continue
 
         try:
-            console.print(f"Uploading {file_path.name} to b2://{bucket_name}/{object_name}...")
-            bucket.upload_local_file(local_file=str(file_path), file_name=object_name)
-            console.print(f"[green]Successfully uploaded {file_path.name}[/]")
+            with create_progress_bar() as progress:
+                task_id = progress.add_task(f"[cyan]Uploading {file_path.name}...[/]", total=100)
+                # B2 SDK doesn't easily expose progress for small files, but we can simulate completion wrapper
+                bucket.upload_local_file(local_file=str(file_path), file_name=object_name)
+                progress.update(task_id, completed=100)
+            print_success(f"Successfully uploaded [cyan]{file_path.name}[/]")
         except Exception as e:
-            console_stderr.print(f"[bold red]Failed to upload {file_path.name}: {e}[/]")
+            print_error(f"Failed to upload {file_path.name}: {e}")
 
 
 def pull_backup(
@@ -83,13 +82,13 @@ def pull_backup(
     dry_run: bool = False,
 ) -> None:
     if not access_key or not secret_key:
-        console_stderr.print("[bold red]Missing B2 credentials (KEY_ID or APP_KEY).[/]")
+        print_error("Missing B2 credentials (KEY_ID or APP_KEY).")
         return
 
     try:
         bucket = _get_b2_bucket(access_key, secret_key, bucket_name)
     except Exception as e:
-        console_stderr.print(f"[bold red]Failed to connect to B2 bucket {bucket_name}: {e}[/]")
+        print_error(f"Failed to connect to B2 bucket {bucket_name}: {e}")
         return
 
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +99,7 @@ def pull_backup(
     try:
         remote_versions = list(bucket.ls(recursive=True))
         if not remote_versions:
-            console.print(f"No objects found in bucket {bucket_name}")
+            print_info(f"No objects found in bucket {bucket_name}")
             return
 
         for file_version, _ in remote_versions:
@@ -108,22 +107,24 @@ def pull_backup(
             file_path = backup_dir / object_name
 
             if object_name in local_files:
-                console.print(f"Skipping {object_name}, already exists locally.")
+                print_info(f"Skipping [cyan]{object_name}[/], already exists locally.")
                 continue
 
             if dry_run:
-                console.print(f"Would pull b2://{bucket_name}/{object_name} to {file_path}")
+                print_info(f"Would pull b2://{bucket_name}/{object_name} to {file_path}")
                 continue
 
             try:
-                console.print(f"Downloading b2://{bucket_name}/{object_name} to {file_path}...")
-                download_dest = bucket.download_file_by_name(object_name)
-                download_dest.save_to(str(file_path))
-                console.print(f"[green]Successfully downloaded {object_name}[/]")
+                with create_progress_bar() as progress:
+                    task_id = progress.add_task(f"[cyan]Downloading {object_name}...[/]", total=100)
+                    download_dest = bucket.download_file_by_name(object_name)
+                    download_dest.save_to(str(file_path))
+                    progress.update(task_id, completed=100)
+                print_success(f"Successfully downloaded [cyan]{object_name}[/]")
             except Exception as e:
-                console_stderr.print(f"[bold red]Failed to download {object_name}: {e}[/]")
+                print_error(f"Failed to download {object_name}: {e}")
     except Exception as e:
-        console_stderr.print(f"[bold red]Failed to sync with bucket {bucket_name}: {e}[/]")
+        print_error(f"Failed to sync with bucket {bucket_name}: {e}")
 
 
 def verify_cloud_connectivity(
@@ -142,5 +143,5 @@ def verify_cloud_connectivity(
             break
         return True
     except Exception as e:
-        console_stderr.print(f"[bold red]Cloud verification failed for {bucket_name}: {e}[/]")
+        print_error(f"Cloud verification failed for {bucket_name}: {e}")
         return False

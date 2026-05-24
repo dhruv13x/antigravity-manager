@@ -78,9 +78,11 @@ def capture_pane(pane_id: str) -> str:
 
 
 def wait_for_prompt(pane_id: str, *, timeout_seconds: float) -> str:
+    from .ui import create_spinner
     start = time.time()
     stable_reads = 0
-    with console.status("[cyan]Waiting for Antigravity startup...[/cyan]", spinner="dots"):
+    with create_spinner() as progress:
+        task_id = progress.add_task("[cyan]Waiting for Antigravity startup...[/]")
         while True:
             output = capture_pane(pane_id)
 
@@ -103,9 +105,11 @@ def wait_for_prompt(pane_id: str, *, timeout_seconds: float) -> str:
 
 
 def wait_for_usage_panel(pane_id: str, *, timeout_seconds: float) -> str:
+    from .ui import create_spinner
     start = time.time()
     last_retry = start
-    with console.status("[cyan]Fetching usage panel...[/cyan]", spinner="dots"):
+    with create_spinner() as progress:
+        task_id = progress.add_task("[cyan]Fetching usage panel...[/]")
         while True:
             output = capture_pane(pane_id)
             if USAGE_HEADER_RE.search(output) and "%" in output:

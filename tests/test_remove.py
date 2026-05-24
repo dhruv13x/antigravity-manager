@@ -37,13 +37,14 @@ def test_perform_remove_local(tmp_path, monkeypatch):
     assert not (bdir / "user@example.com-latest-antigravity.tar.gz").exists()
     assert (bdir / "2026-05-24-123456-other@example.com-antigravity.tar.gz").exists()
 
-def test_remove_result_to_text():
+def test_remove_result_to_text(capsys):
     results = {
         "local_files_removed": ["file1.tar.gz"],
         "local_registry_removed": True,
     }
-    out = remove_result_to_text(results, "user@example.com", False)
-    assert "removed" in out
+    remove_result_to_text(results, "user@example.com", False)
+    out = capsys.readouterr().out
+    assert "REMOVED" in out
     assert "user@example.com" in out
     assert "file1.tar.gz" in out
     assert "YES" in out

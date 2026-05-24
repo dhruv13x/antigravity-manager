@@ -3,6 +3,11 @@ from antigravity_manager.doctor import run_doctor
 def test_run_doctor_pass(tmp_path, monkeypatch):
     import shutil
     monkeypatch.setattr(shutil, "which", lambda x: "cmd")
+
+    # Mock cloud connectivity resolution so it doesn't fail
+    import antigravity_manager.doctor
+    monkeypatch.setattr(antigravity_manager.doctor, "resolve_credentials", lambda *a, **kw: ("id", "key", "bucket", "endpoint"))
+    monkeypatch.setattr(antigravity_manager.doctor, "verify_cloud_connectivity", lambda *a, **kw: True)
     x = tmp_path / "x"
     x.mkdir()
     (x / "google_accounts.json").write_text("{}")

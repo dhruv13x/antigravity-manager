@@ -88,14 +88,27 @@ def perform_prune(args: Any) -> PrunePlan:
 
 
 def prune_result_to_text(plan: PrunePlan, *, dry_run: bool, source_dir: Path | None = None) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'pruned'}",
-    ]
+    from .ui import Table, print_panel, print_info
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Property", style="info")
+    table.add_column("Value", style="muted")
+
+    table.add_row("Mode", "[warning]DRY RUN[/]" if dry_run else "[success]PRUNED[/]")
     if source_dir is not None:
-        lines.append(f"source_dir: {source_dir}")
-    lines.append(f"files_removed: {len(plan.files)}")
-    lines.extend(f"file: {path}" for path in plan.files)
-    lines.append(f"directories_removed: {len(plan.directories)}")
-    lines.extend(f"dir: {path}" for path in plan.directories)
-    lines.append("preserved: authentication and persistent state")
-    return "\n".join(lines)
+        table.add_row("Source Dir", str(source_dir))
+    table.add_row("Files Removed", str(len(plan.files)))
+    table.add_row("Directories Removed", str(len(plan.directories)))
+    table.add_row("Preserved", "authentication and persistent state")
+
+    print_panel(table, title="Prune Result", style="success")
+
+    if plan.files:
+        print_info("Files pruned:")
+        for path in plan.files:
+            print_info(f"  - {path}")
+    if plan.directories:
+        print_info("Directories pruned:")
+        for path in plan.directories:
+            print_info(f"  - {path}")
+
+    return ""

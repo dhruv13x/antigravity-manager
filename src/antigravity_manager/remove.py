@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .registry import load_registry, save_registry
-from .ui import Confirm, console
+from .ui import Confirm, console, print_info, print_warning, print_error, print_success, print_panel, Table
 
 
 def perform_remove(args: Any) -> dict[str, Any]:
@@ -32,14 +32,10 @@ def perform_remove(args: Any) -> dict[str, Any]:
 
     # 3. Confirmation
     if not force and not dry_run:
-        console.print(
-            f"\n[bold red]WARNING:[/] This will delete all backups and registry entries for [cyan]{email}[/]."
-        )
-        console.print(f"Local files to remove: [bold]{len(local_files)}[/]")
-        if not Confirm.ask(
-            f"[bold yellow]Are you sure you want to remove all traces of {email}?[/]"
-        ):
-            console.print("[blue]Removal cancelled.[/]")
+        print_warning(f"This will delete all backups and registry entries for [cyan]{email}[/].")
+        print_info(f"Local files to remove: [bold]{len(local_files)}[/]")
+        if not Confirm.ask(f"[warning]Are you sure you want to remove all traces of {email}?[/]"):
+            print_info("Removal cancelled.")
             return results
 
     # 4. Execute Local Removal
@@ -59,17 +55,20 @@ def perform_remove(args: Any) -> dict[str, Any]:
 
 
 def remove_result_to_text(results: dict[str, Any], email: str, dry_run: bool) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'removed'}",
-        f"email: {email}",
-    ]
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Property", style="info")
+    table.add_column("Value", style="muted")
 
-    lines.append(f"local_files_removed: {len(results['local_files_removed'])}")
-    for f in results["local_files_removed"]:
-        lines.append(f"  - {f}")
+    table.add_row("Mode", "[warning]DRY RUN[/]" if dry_run else "[success]REMOVED[/]")
+    table.add_row("Email", email)
+    table.add_row("Local Files Removed", str(len(results["local_files_removed"])))
+    table.add_row("Local Registry Removed", "[success]YES[/]" if results["local_registry_removed"] else "[warning]NO (not found)[/]")
 
-    lines.append(
-        f"local_registry_removed: {'YES' if results['local_registry_removed'] else 'NO (not found)'}"
-    )
+    print_panel(table, title="Removal Result", style="success")
 
-    return "\n".join(lines)
+    if results["local_files_removed"]:
+        print_info("Files removed:")
+        for f in results["local_files_removed"]:
+            print_info(f"  - {f}")
+
+    return ""

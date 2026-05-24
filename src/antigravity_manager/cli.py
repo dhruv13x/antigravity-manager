@@ -289,6 +289,8 @@ def build_parser() -> argparse.ArgumentParser:
     check_cloud_parser.add_argument("--access-key", help="S3 access key.")
     check_cloud_parser.add_argument("--secret-key", help="S3 secret key.")
 
+    interactive_parser = subparsers.add_parser("interactive", help="Launch the interactive CLI menu.")
+
     return parser
 
 
@@ -510,10 +512,14 @@ def handle_check_cloud(args: argparse.Namespace) -> None:
         access_key=access_key,
         secret_key=secret_key,
     ):
-        console.print(f"[bold green]Successfully verified cloud access to {bucket_name}[/]")
+        from .ui import print_success
+        print_success(f"Successfully verified cloud access to {bucket_name}")
     else:
         sys.exit(1)
 
+def handle_interactive(args: argparse.Namespace) -> None:
+    from .interactive import interactive_menu
+    interactive_menu(args)
 
 def main() -> None:
     # Handle main help manually to use Rich
@@ -577,11 +583,13 @@ def main() -> None:
         "profile": handle_profile,
         "sync": handle_sync,
         "check-cloud": handle_check_cloud,
+        "interactive": handle_interactive,
     }
     try:
         handlers[args.command](args)
     except (FileNotFoundError, FileExistsError, ValueError, RuntimeError) as exc:
-        error_console.print(f"[bold red]Error:[/bold red] {exc}")
+        from .ui import print_error
+        print_error(f"{exc}")
         sys.exit(1)
 
 

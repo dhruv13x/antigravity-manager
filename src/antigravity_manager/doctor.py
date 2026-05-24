@@ -60,22 +60,15 @@ def run_doctor(
 
 
 def print_doctor_table(checks: list[tuple[str, bool, str]]) -> None:
-    from .banner import print_logo
-    from .ui import Panel, Table, console
+    from .ui import create_table, print_info, print_success, print_panel, console
 
-    print_logo()
-    console.print("[bold cyan]🩺  Running System Diagnostic...[/]")
+    print_info("🩺 Running System Diagnostic...")
 
-    table = Table(show_header=True, header_style="bold bright_magenta")
-    table.add_column("Component", style="bright_cyan")
-    table.add_column("Status", justify="center")
-    table.add_column("Detail", style="dim")
+    table = create_table("Component", "Status", "Detail", title="System Diagnostic Results")
 
     for name, ok, detail in checks:
-        table.add_row(
-            name,
-            "[bold bright_green]OK[/]" if ok else "[bold red]FAIL[/]",
-            detail,
-        )
-    console.print(table)
-    console.print("[bold bright_green]Diagnostic Complete.[/]")
+        status_text = "[success]✓ OK[/]" if ok else "[error]✗ FAIL[/]"
+        table.add_row(name, status_text, f"[muted]{detail}[/]")
+
+    print_panel(table, style="info")
+    print_success("Diagnostic Complete.")

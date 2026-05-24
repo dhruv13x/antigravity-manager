@@ -253,8 +253,9 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
     if getattr(args, "encrypt", False):
         import getpass
         import subprocess
+        from .ui import print_info
 
-        console.print(f"Encrypting archive: {archive_path} -> .gpg")
+        print_info(f"Encrypting archive: [cyan]{archive_path}[/] -> .gpg")
         passphrase = os.environ.get("AGM_BACKUP_PASSWORD")
         if not passphrase:
             passphrase = getpass.getpass("Enter passphrase for backup encryption: ")
@@ -299,15 +300,23 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
 def backup_result_to_text(
     archive_path: Path, metadata_path: Path, metadata: dict[str, Any], *, dry_run: bool
 ) -> str:
-    return "\n".join(
-        [
-            f"mode: {'dry-run' if dry_run else 'created'}",
-            f"archive: {archive_path}",
-            f"metadata: {metadata_path}",
-            f"email: {metadata.get('email', 'unknown')}",
-            f"plan: {metadata.get('plan', 'unknown')}",
-            f"next_available_at: {metadata.get('next_available_at', 'unknown')}",
-            f"backup_anchor: {metadata.get('backup_anchor_at', 'unknown')} ({metadata.get('backup_anchor_source', 'unknown')})",
-            f"backup_mode: {metadata.get('backup_mode', 'unknown')}",
-        ]
-    )
+    from .ui import Table, print_panel
+    from dataclasses import asdict
+    import json
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Property", style="info")
+    table.add_column("Value", style="muted")
+
+    table.add_row("Mode", "[warning]DRY RUN[/]" if dry_run else "[success]CREATED[/]")
+    table.add_row("Archive", str(archive_path))
+    table.add_row("Metadata", str(metadata_path))
+    table.add_row("Email", metadata.get("email", "unknown"))
+    table.add_row("Plan", metadata.get("plan", "unknown"))
+    table.add_row("Next Available", metadata.get("next_available_at", "unknown"))
+    table.add_row("Backup Anchor", f"{metadata.get('backup_anchor_at', 'unknown')} ({metadata.get('backup_anchor_source', 'unknown')})")
+    table.add_row("Backup Mode", metadata.get("backup_mode", "unknown"))
+
+    # We return the empty string because we print directly, but to keep the signature we can do this
+    print_panel(table, title="Backup Result", style="success")
+    return ""

@@ -15,7 +15,8 @@ def test_perform_purge(tmp_path):
     assert perform_purge(args) is True
     assert not d.exists()
 
-def test_purge_result_to_text():
-    out = purge_result_to_text(True, Path("/tmp"), False)
-    assert "purged" in out
+def test_purge_result_to_text(capsys):
+    purge_result_to_text(True, Path("/tmp"), False)
+    out = capsys.readouterr().out
+    assert "PURGED" in out
     assert "Antigravity home has been factory reset." in out
