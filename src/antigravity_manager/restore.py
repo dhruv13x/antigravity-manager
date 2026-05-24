@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tarfile
 import tempfile
@@ -64,6 +65,22 @@ def validate_member_name(name: str) -> None:
         raise ValueError(f"Unexpected archive member path: {name}")
 
 
+def _link_stays_within_archive(member_name: str, link_name: str) -> bool:
+    if os.path.isabs(link_name):
+        return False
+    member_parent = Path(member_name).parent
+    target_parts = (member_parent / link_name).parts
+    return ".." not in target_parts
+
+
+def safe_tar_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo | None:
+    validate_member_name(member.name)
+    if member.islnk() or member.issym():
+        if not _link_stays_within_archive(member.name, member.linkname):
+            return None
+    return tarfile.data_filter(member, dest_path)
+
+
 def safe_extract(archive_path: Path, dest_dir: Path) -> None:
     if archive_path.suffix == ".gpg":
         import getpass
@@ -71,8 +88,6 @@ def safe_extract(archive_path: Path, dest_dir: Path) -> None:
 
         with tempfile.NamedTemporaryFile(suffix=".tar.gz") as temp_archive:
             temp_path = Path(temp_archive.name)
-            import os
-
             passphrase = os.environ.get("AGM_BACKUP_PASSWORD")
             if not passphrase:
                 passphrase = getpass.getpass(f"Passphrase for {archive_path.name}: ")
@@ -93,14 +108,14 @@ def safe_extract(archive_path: Path, dest_dir: Path) -> None:
                 with tarfile.open(temp_path, "r:gz") as tar:
                     for member in tar.getmembers():
                         validate_member_name(member.name)
-                    tar.extractall(dest_dir, filter="data")
+                    tar.extractall(dest_dir, filter=safe_tar_filter)
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
                 raise RuntimeError(f"GPG decryption failed: {e}") from e
     else:
         with tarfile.open(archive_path, "r:gz") as tar:
             for member in tar.getmembers():
                 validate_member_name(member.name)
-            tar.extractall(dest_dir, filter="data")
+            tar.extractall(dest_dir, filter=safe_tar_filter)
 
 
 def backup_existing_file(path: Path, *, label: str) -> Path | None:

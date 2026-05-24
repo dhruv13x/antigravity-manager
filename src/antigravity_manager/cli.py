@@ -97,7 +97,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backup_parser.add_argument("--dry-run", action="store_true", help="Show what would be created.")
     backup_parser.add_argument("--force", action="store_true", help="Overwrite existing archive.")
-    backup_parser.add_argument("--encrypt", action="store_true", help="Encrypt the archive with GPG.")
+    backup_parser.add_argument(
+        "--encrypt", action="store_true", help="Encrypt the archive with GPG."
+    )
     add_tmux_args(backup_parser)
 
     restore_parser = subparsers.add_parser("restore", help="Restore an Antigravity backup.")
@@ -152,7 +154,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     list_parser.add_argument("--email", help="Filter by email.")
     list_parser.add_argument(
-        "--latest-per-email", action="store_true", help="Show only latest backup per account."
+        "--all",
+        action="store_true",
+        help="Show all backups instead of only the latest backup per account.",
+    )
+    list_parser.add_argument(
+        "--latest-per-email",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     list_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
@@ -361,7 +370,7 @@ def handle_list_backups(args: argparse.Namespace) -> None:
     entries = list_backups(
         Path(args.backup_dir).expanduser(),
         email=args.email,
-        latest_per_email=args.latest_per_email,
+        latest_per_email=not getattr(args, "all", False),
     )
     if args.json:
         console.print(

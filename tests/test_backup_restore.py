@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any
 import json
 import tarfile
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from antigravity_manager.backup import perform_backup, resolve_backup_anchor
-from antigravity_manager.restore import perform_restore
+from antigravity_manager.restore import perform_restore, safe_extract
 from antigravity_manager.status import LiveStatus, ModelQuotaStatus
 
 
@@ -180,3 +180,34 @@ def test_backup_no_decision_model_found(tmp_path: Path, monkeypatch: Any) -> Non
     )
     assert archive_path.exists()
     assert metadata["backup_anchor_model"] is None
+
+
+def test_safe_extract_skips_absolute_symlink(tmp_path: Path) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    dest_dir = tmp_path / "extract"
+    dest_dir.mkdir()
+
+    with tarfile.open(archive_path, "w:gz") as tar:
+        file_data = b"{}"
+        file_info = tarfile.TarInfo("antigravity-cli/settings.json")
+        file_info.size = len(file_data)
+        import io
+
+        tar.addfile(file_info, io.BytesIO(file_data))
+
+        link_info = tarfile.TarInfo(
+            "antigravity-cli/.antigravitycli/dbe4d293-62ea-4947-9dc6-0565c9e2f462.json"
+        )
+        link_info.type = tarfile.SYMTYPE
+        link_info.linkname = "/root/.antigravitycli/dbe4d293-62ea-4947-9dc6-0565c9e2f462.json"
+        tar.addfile(link_info)
+
+    safe_extract(archive_path, dest_dir)
+
+    assert (dest_dir / "antigravity-cli" / "settings.json").read_text() == "{}"
+    assert not (
+        dest_dir
+        / "antigravity-cli"
+        / ".antigravitycli"
+        / "dbe4d293-62ea-4947-9dc6-0565c9e2f462.json"
+    ).exists()

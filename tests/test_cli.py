@@ -24,6 +24,17 @@ def test_cli_explicit_command_works() -> None:
     assert args.json is True
 
 
+def test_cli_list_backups_defaults_to_latest_per_account() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["list-backups"])
+    assert args.command == "list-backups"
+    assert args.all is False
+
+    args = parser.parse_args(["list-backups", "--all"])
+    assert args.command == "list-backups"
+    assert args.all is True
+
+
 def test_cli_shortcut_s_is_status() -> None:
     parser = build_parser()
     args = parser.parse_args(["-s"])
