@@ -31,6 +31,18 @@ tests/test_cli.py
 tests/test_cli_commands.py
 tests/test_cooldown.py
 tests/test_cooldown2.py
+tests/test_coverage_ext11.py
+tests/test_coverage_ext12.py
+tests/test_coverage_ext14.py
+tests/test_coverage_ext15.py
+tests/test_coverage_ext16.py
+tests/test_coverage_ext2.py
+tests/test_coverage_ext3.py
+tests/test_coverage_ext4.py
+tests/test_coverage_ext6.py
+tests/test_coverage_ext7.py
+tests/test_coverage_ext8.py
+tests/test_coverage_ext9.py
 tests/test_credentials.py
 tests/test_doctor.py
 tests/test_doctor_2.py
@@ -46,4 +58,5 @@ tests/test_status_2.py
 tests/test_status_3.py
 tests/test_status_4.py
 tests/test_sync.py
+tests/test_ui_rendering.py
 tests/test_utils.py

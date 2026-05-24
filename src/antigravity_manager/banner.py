@@ -1,8 +1,7 @@
+import math
+
 from rich.console import Console
 from rich.text import Text
-import math
-import random
-import shutil
 
 console = Console()
 

@@ -70,6 +70,7 @@ def safe_extract(archive_path: Path, dest_dir: Path) -> None:
 
         with tempfile.NamedTemporaryFile(suffix=".tar.gz") as temp_archive:
             temp_path = Path(temp_archive.name)
+            import os
             passphrase = os.environ.get("AGM_BACKUP_PASSWORD")
             if not passphrase:
                 passphrase = getpass.getpass(f"Passphrase for {archive_path.name}: ")
@@ -92,7 +93,7 @@ def safe_extract(archive_path: Path, dest_dir: Path) -> None:
                         validate_member_name(member.name)
                     tar.extractall(dest_dir, filter="data")
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                raise RuntimeError(f"GPG decryption failed: {e}")
+                raise RuntimeError(f"GPG decryption failed: {e}") from e
     else:
         with tarfile.open(archive_path, "r:gz") as tar:
             for member in tar.getmembers():
@@ -250,17 +251,37 @@ def restore_result_to_text(
     *,
     dry_run: bool,
     full: bool,
-) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'restored'}",
-        f"restore_type: {'full' if full else 'auth-only'}",
-        f"archive: {archive_path}",
-        f"email: {metadata.get('email', 'unknown')}",
-        f"plan: {metadata.get('plan', 'unknown')}",
-    ]
+) -> Any:
+    from .ui import Group, Panel, Table, Text, Tree
+
+    title = "[warning]Restore Result (Dry Run)[/]" if dry_run else "[success]Restore Completed[/]"
+    border_style = "warning" if dry_run else "success"
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", justify="right")
+    table.add_column(style="white")
+
+    table.add_row("Email:", str(metadata.get('email', 'unknown')))
+    table.add_row("Plan:", str(metadata.get('plan', 'unknown')))
+    table.add_row("Type:", "Full Restore" if full else "Auth-only Restore")
+    table.add_row("Archive:", str(archive_path))
+
     if safety_path:
-        lines.append(f"safety_backup: {safety_path}")
+        table.add_row("Safety Backup:", f"[dim]{safety_path}[/dim]")
+
+    components = [table]
+
     if restored_files:
-        lines.append("restored_files:")
-        lines.extend(f"  - {path}" for path in restored_files)
-    return "\n".join(lines)
+        tree = Tree("📁 [bold bright_cyan]Restored Files[/]")
+        for path in restored_files:
+            tree.add(f"[green]{path}[/]")
+
+        components.append(Text(""))
+        components.append(tree)
+
+    return Panel(
+        Group(*components),
+        title=title,
+        border_style=border_style,
+        expand=False
+    )

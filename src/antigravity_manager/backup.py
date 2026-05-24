@@ -254,7 +254,9 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
         import getpass
         import subprocess
 
-        console.print(f"Encrypting archive: {archive_path} -> .gpg")
+        import antigravity_manager.ui
+        antigravity_manager.ui.console.print(f"Encrypting archive: {archive_path} -> .gpg")
+        import os
         passphrase = os.environ.get("AGM_BACKUP_PASSWORD")
         if not passphrase:
             passphrase = getpass.getpass("Enter passphrase for backup encryption: ")
@@ -284,7 +286,7 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
             metadata["archive_path"] = str(archive_path)
             metadata["encrypted"] = True
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            raise RuntimeError(f"GPG encryption failed: {e}")
+            raise RuntimeError(f"GPG encryption failed: {e}") from e
 
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -298,16 +300,29 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
 
 def backup_result_to_text(
     archive_path: Path, metadata_path: Path, metadata: dict[str, Any], *, dry_run: bool
-) -> str:
-    return "\n".join(
-        [
-            f"mode: {'dry-run' if dry_run else 'created'}",
-            f"archive: {archive_path}",
-            f"metadata: {metadata_path}",
-            f"email: {metadata.get('email', 'unknown')}",
-            f"plan: {metadata.get('plan', 'unknown')}",
-            f"next_available_at: {metadata.get('next_available_at', 'unknown')}",
-            f"backup_anchor: {metadata.get('backup_anchor_at', 'unknown')} ({metadata.get('backup_anchor_source', 'unknown')})",
-            f"backup_mode: {metadata.get('backup_mode', 'unknown')}",
-        ]
+) -> Any:
+    from .ui import Panel, Table
+
+    title = "[warning]Backup Result (Dry Run)[/]" if dry_run else "[success]Backup Created[/]"
+    border_style = "warning" if dry_run else "success"
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", justify="right")
+    table.add_column(style="white")
+
+    table.add_row("Email:", str(metadata.get('email', 'unknown')))
+    table.add_row("Plan:", str(metadata.get('plan', 'unknown')))
+    table.add_row("Archive:", str(archive_path))
+    table.add_row("Metadata:", str(metadata_path))
+    table.add_row("Next Available:", str(metadata.get('next_available_at', 'unknown')))
+
+    anchor_src = metadata.get('backup_anchor_source', 'unknown')
+    table.add_row("Anchor:", f"{metadata.get('backup_anchor_at', 'unknown')} [dim]({anchor_src})[/dim]")
+    table.add_row("Mode:", str(metadata.get('backup_mode', 'unknown')))
+
+    return Panel(
+        table,
+        title=title,
+        border_style=border_style,
+        expand=False
     )

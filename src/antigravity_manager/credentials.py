@@ -17,7 +17,7 @@ def load_env_file(path: str) -> dict[str, str]:
         return {}
     env = {}
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
@@ -95,16 +95,20 @@ def resolve_credentials(args: Any, allow_fail: bool = False) -> tuple[str | None
         # Try AGM_B2 first
         if not c_id:
             c_id = source_dict.get("AGM_B2_KEY_ID") or source_dict.get("AWS_ACCESS_KEY_ID")
-            if c_id: updated = True
+            if c_id:
+                updated = True
         if not c_key:
             c_key = source_dict.get("AGM_B2_APP_KEY") or source_dict.get("AWS_SECRET_ACCESS_KEY")
-            if c_key: updated = True
+            if c_key:
+                updated = True
         if not c_bucket:
             c_bucket = source_dict.get("AGM_B2_BUCKET") or source_dict.get("AWS_BUCKET_NAME")
-            if c_bucket: updated = True
+            if c_bucket:
+                updated = True
         if not c_endpoint:
             c_endpoint = source_dict.get("AGM_B2_ENDPOINT") or source_dict.get("AWS_ENDPOINT_URL")
-            if c_endpoint: updated = True
+            if c_endpoint:
+                updated = True
         return updated
 
     # 2. Doppler

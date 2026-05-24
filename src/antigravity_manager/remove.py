@@ -58,18 +58,28 @@ def perform_remove(args: Any) -> dict[str, Any]:
     return results
 
 
-def remove_result_to_text(results: dict[str, Any], email: str, dry_run: bool) -> str:
-    lines = [
-        f"mode: {'dry-run' if dry_run else 'removed'}",
-        f"email: {email}",
-    ]
+def remove_result_to_text(results: dict[str, Any], email: str, dry_run: bool) -> Any:
+    from .ui import Panel, Tree
 
-    lines.append(f"local_files_removed: {len(results['local_files_removed'])}")
-    for f in results["local_files_removed"]:
-        lines.append(f"  - {f}")
+    title = f"[warning]Remove Plan for {email} (Dry Run)[/]" if dry_run else f"[danger]Account Removed: {email}[/]"
+    border_style = "warning" if dry_run else "danger"
 
-    lines.append(
-        f"local_registry_removed: {'YES' if results['local_registry_removed'] else 'NO (not found)'}"
+    tree = Tree(f"🗑️  [bold red]Traces Removed for {email}[/]")
+
+    if results.get("local_files_removed"):
+        for path in results["local_files_removed"]:
+            tree.add(f"✅ [bold]local file[/]: {path}")
+
+    if results.get("local_registry_removed"):
+        tree.add(f"✅ [bold]registry entry[/]: {email}")
+
+    if not results.get("local_files_removed") and not results.get("local_registry_removed"):
+        tree.add(f"[yellow]No removal actions taken for {email}.[/]")
+
+    return Panel(
+        tree,
+        title=title,
+        border_style=border_style,
+        expand=False
     )
 
-    return "\n".join(lines)

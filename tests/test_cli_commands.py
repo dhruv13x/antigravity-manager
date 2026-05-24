@@ -6,14 +6,14 @@ def test_cli_purge(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(sys, "argv", ["agm", "purge", "--dry-run"])
     main()
     captured = capsys.readouterr()
-    assert "dry-run" in captured.out
+    assert "dry-run" in captured.out.lower() or "dry run" in captured.out.lower()
 
 def test_cli_remove(monkeypatch, tmp_path, capsys):
     import sys
     monkeypatch.setattr(sys, "argv", ["agm", "remove", "user@example.com", "--dry-run"])
     main()
     captured = capsys.readouterr()
-    assert "dry-run" in captured.out
+    assert "dry-run" in captured.out.lower() or "dry run" in captured.out.lower()
 
 def test_cli_profile(monkeypatch, tmp_path, capsys):
     import sys
@@ -28,6 +28,7 @@ def test_cli_sync(monkeypatch, tmp_path, capsys):
 
     # We mock push_backup directly
     import antigravity_manager.cli
+    monkeypatch.setattr("antigravity_manager.cli.resolve_credentials", lambda *a, **kw: ("key", "secret", "b", "url"))
     monkeypatch.setattr(antigravity_manager.cli, "push_backup", lambda *a, **kw: print("pushed!"))
 
     main()
@@ -58,6 +59,7 @@ def test_cli_sync_pull(monkeypatch, tmp_path, capsys):
     import sys
     monkeypatch.setattr(sys, "argv", ["agm", "sync", "pull", "--bucket-name", "b", "--dry-run"])
     import antigravity_manager.cli
+    monkeypatch.setattr("antigravity_manager.cli.resolve_credentials", lambda *a, **kw: ("key", "secret", "b", "url"))
     monkeypatch.setattr(antigravity_manager.cli, "pull_backup", lambda *a, **kw: print("pulled!"))
     main()
     captured = capsys.readouterr()

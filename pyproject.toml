@@ -89,7 +89,7 @@ addopts = [
   "--cov-report=term-missing:skip-covered",
   "--cov-report=html",
   "--cov-report=xml",
-  "--cov-fail-under=50",
+  "--cov-fail-under=80",
 ]
 
 log_cli = true
@@ -102,7 +102,7 @@ source = ["src/antigravity_manager"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 50
+fail_under = 80
 precision = 2
 
 [tool.ruff]
