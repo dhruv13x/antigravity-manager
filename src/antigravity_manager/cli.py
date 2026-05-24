@@ -532,7 +532,7 @@ def main() -> None:
     try:
         handlers[args.command](args)
     except (FileNotFoundError, FileExistsError, ValueError, RuntimeError) as exc:
-        console.print(f"[bold red]Error:[/bold red] {exc}")
+        console.print(f"[bold red]Error:[/bold red] {exc}", stderr=True)
         sys.exit(1)
 
 
