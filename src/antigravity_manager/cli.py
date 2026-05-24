@@ -243,6 +243,11 @@ def build_parser() -> argparse.ArgumentParser:
     purge_parser.set_defaults(command="purge")
 
     remove_parser = subparsers.add_parser("remove", help="Remove data.")
+    remove_parser.add_argument("email", help="Account email to remove.")
+    remove_parser.add_argument("--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory.")
+    remove_parser.add_argument("--cloud", action="store_true", help="Also remove from cloud (B2).")
+    remove_parser.add_argument("--dry-run", action="store_true", help="Show what would be removed.")
+    remove_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation.")
     remove_parser.set_defaults(command="remove")
 
     profile_parser = subparsers.add_parser("profile", help="Manage profiles.")
