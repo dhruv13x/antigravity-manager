@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .list_backups import build_backup_entry, iter_backup_archives
+from .list_backups import build_backup_entry, iter_backup_archives, metadata_path_for_archive
 from .ui import console
 
 
@@ -61,9 +61,7 @@ def perform_prune_backups(
     for entry in to_delete:
         if dry_run:
             console.print(f"Would delete {entry.archive_path.name}")
-            metadata_path = entry.archive_path.with_name(
-                entry.archive_path.name.replace(".tar.gz", ".metadata.json")
-            )
+            metadata_path = metadata_path_for_archive(entry.archive_path)
             if metadata_path.exists():
                 console.print(f"Would delete {metadata_path.name}")
             continue
@@ -71,9 +69,7 @@ def perform_prune_backups(
         console.print(f"Deleting {entry.archive_path.name}...")
         try:
             entry.archive_path.unlink()
-            metadata_path = entry.archive_path.with_name(
-                entry.archive_path.name.replace(".tar.gz", ".metadata.json")
-            )
+            metadata_path = metadata_path_for_archive(entry.archive_path)
             if metadata_path.exists():
                 console.print(f"Deleting {metadata_path.name}...")
                 metadata_path.unlink()

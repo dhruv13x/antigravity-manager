@@ -26,6 +26,7 @@ from .registry import update_registry_from_status
 from .remove import perform_remove, remove_result_to_text
 from .restore import perform_restore, restore_result_to_text
 from .status import (
+    LiveStatus,
     capture_tmux_status_text,
     live_status_to_text,
     parse_live_status_text,
@@ -33,6 +34,37 @@ from .status import (
 )
 from .sync import pull_backup, push_backup, verify_cloud_connectivity
 from .ui import banner, console, error_console, print_rich_help
+from .utils import build_archive_name
+
+
+def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
+    metadata = {
+        "schema_version": 1,
+        "product": "antigravity",
+        "record_type": "status",
+        "email": status.email,
+        "plan": status.plan,
+        "created_at": status.captured_at.isoformat(),
+        "captured_at": status.captured_at.isoformat(),
+        "next_available_at": max(
+            (
+                model.refresh_at
+                for model in status.models
+                if model.refresh_at is not None
+            ),
+            default=status.captured_at,
+        ).isoformat(),
+        "archive_name": None,
+        "archive_path": None,
+        "backup_mode": "status-only",
+        "status": status_to_dict(status),
+    }
+    metadata_path = backup_dir / build_archive_name(
+        status.captured_at, status.email
+    ).replace(".tar.gz", ".status.metadata.json")
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+    return metadata_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,6 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
         "status", help="Capture and parse live Antigravity /usage status."
     )
     status_parser.add_argument("--input-file", help="Read captured status text from a file.")
+    status_parser.add_argument(
+        "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Metadata output directory."
+    )
+    status_parser.add_argument(
+        "--no-save", action="store_true", help="Display status without updating saved metadata."
+    )
     status_parser.add_argument("--json", action="store_true", help="Print JSON output.")
     add_tmux_args(status_parser)
 
@@ -101,7 +139,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_tmux_args(backup_parser)
 
-    restore_parser = subparsers.add_parser("restore", help="Restore an Antigravity backup.")
+    restore_parser = subparsers.add_parser("restore", help="Full restore an Antigravity backup.")
+    restore_parser.add_argument(
+        "target",
+        nargs="?",
+        help="Account email, archive filename, or archive path to restore.",
+    )
     restore_parser.add_argument("--from-archive", help="Specific backup archive to restore.")
     restore_parser.add_argument("--email", help="Restore latest backup for this email.")
     restore_parser.add_argument(
@@ -120,7 +163,13 @@ def build_parser() -> argparse.ArgumentParser:
     restore_parser.add_argument(
         "--full",
         action="store_true",
+        default=None,
         help="Restore full Antigravity state instead of auth-only files.",
+    )
+    restore_parser.add_argument(
+        "--auth-only",
+        action="store_true",
+        help="Restore only account identity/auth files.",
     )
     restore_parser.add_argument(
         "--force",
@@ -180,6 +229,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--use", action="store_true", help="Immediately auth-only restore the recommended account."
     )
     recommend_parser.add_argument(
+        "--restore", action="store_true", help="Immediately full restore the recommended account."
+    )
+    recommend_parser.add_argument(
         "--dest-dir",
         default=str(ANTIGRAVITY_HOME),
         help="Antigravity CLI directory to restore into.",
@@ -193,8 +245,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Show what would be restored with --use."
     )
 
-    use_parser = subparsers.add_parser("use", help="Auth-only restore for an account.")
-    use_parser.add_argument("email", help="Account email to switch to.")
+    use_parser = subparsers.add_parser("use", help="Auth-only restore for an account or archive.")
+    use_parser.add_argument("target", help="Account email, archive filename, or archive path.")
     use_parser.add_argument(
         "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory."
     )
@@ -241,7 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory."
     )
     prune_backups_parser.add_argument(
-        "--keep", type=int, help="Number of backups to keep per email."
+        "--keep", type=int, default=1, help="Number of backups to keep per email."
     )
     prune_backups_parser.add_argument(
         "--keep-latest-per-email",
@@ -326,7 +378,9 @@ def handle_status(args: argparse.Namespace) -> None:
             usage_timeout_seconds=args.usage_timeout_seconds,
         )
     status = parse_live_status_text(text)
-    update_registry_from_status(status)
+    if not getattr(args, "no_save", False):
+        update_registry_from_status(status)
+        save_status_metadata(status, Path(args.backup_dir).expanduser())
     if args.json:
         console.print(json.dumps(status_to_dict(status), indent=2), markup=False)
     else:
@@ -341,6 +395,10 @@ def handle_backup(args: argparse.Namespace) -> None:
 
 
 def handle_restore(args: argparse.Namespace) -> None:
+    if getattr(args, "auth_only", False) and getattr(args, "full", None):
+        raise ValueError("Use either --auth-only or --full, not both.")
+    if getattr(args, "full", None) is None:
+        args.full = not getattr(args, "auth_only", False)
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
     console.print(
         restore_result_to_text(
@@ -380,6 +438,8 @@ def handle_list_backups(args: argparse.Namespace) -> None:
 
 
 def handle_recommend(args: argparse.Namespace) -> None:
+    if args.use and args.restore:
+        raise ValueError("Use either --use or --restore, not both.")
     entries = list_backups(Path(args.backup_dir).expanduser(), latest_per_email=True)
     statuses = evaluate_entries(entries, decision_model=args.decision_model)
     if not statuses:
@@ -405,17 +465,27 @@ def handle_recommend(args: argparse.Namespace) -> None:
             )
         )
     if args.use:
-        args.email = selected.email
+        args.target = selected.email
+        args.email = None
         args.full = False
         args.force = False
         args.from_archive = None
         handle_use(args)
+    elif args.restore:
+        args.target = selected.email
+        args.email = None
+        args.auth_only = False
+        args.full = True
+        args.force = False
+        args.from_archive = None
+        handle_restore(args)
 
 
 def handle_use(args: argparse.Namespace) -> None:
     args.full = False
     args.force = False
     args.from_archive = None
+    args.email = None
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
     console.print(
         restore_result_to_text(
@@ -464,12 +534,14 @@ def handle_prune_backups(args: argparse.Namespace) -> None:
 
 
 def handle_purge(args: argparse.Namespace) -> None:
+    args.dry_run = getattr(args, "dry_run", False) or not getattr(args, "yes", False)
     source_dir = Path(args.source_dir).expanduser()
     success = perform_purge(args)
     console.print(purge_result_to_text(success, source_dir=source_dir, dry_run=args.dry_run))
 
 
 def handle_remove(args: argparse.Namespace) -> None:
+    args.dry_run = getattr(args, "dry_run", False) or not getattr(args, "yes", False)
     results = perform_remove(args)
     console.print(remove_result_to_text(results, email=args.email, dry_run=args.dry_run))
 
@@ -552,6 +624,8 @@ def main() -> None:
         # Populate defaults for status if not provided via subcommand
         if not hasattr(args, "input_file"):
             args.input_file = None
+            args.backup_dir = str(DEFAULT_BACKUP_DIR)
+            args.no_save = False
             args.json = False
             args.agy_command = "agy"
             args.tmux_session_name = None

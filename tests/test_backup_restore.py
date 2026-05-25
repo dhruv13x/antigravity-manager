@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from antigravity_manager.backup import perform_backup, resolve_backup_anchor
-from antigravity_manager.restore import perform_restore, safe_extract
+from antigravity_manager.restore import perform_restore, resolve_archive_path, safe_extract
 from antigravity_manager.status import LiveStatus, ModelQuotaStatus
 
 
@@ -225,3 +225,55 @@ def test_safe_extract_skips_absolute_symlink(tmp_path: Path) -> None:
         / ".antigravitycli"
         / "dbe4d293-62ea-4947-9dc6-0565c9e2f462.json"
     ).exists()
+
+
+def test_resolve_archive_path_accepts_positional_email_target(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    archive = backup_dir / "2026-05-25-203839-user@example.com-antigravity.tar.gz"
+    archive.touch()
+    archive.with_name(archive.name.replace(".tar.gz", ".metadata.json")).write_text(
+        json.dumps(
+            {
+                "product": "antigravity",
+                "email": "user@example.com",
+                "plan": "Pro",
+                "created_at": "2026-05-25T20:38:39+05:30",
+                "captured_at": "2026-05-25T20:38:39+05:30",
+                "next_available_at": "2026-05-25T20:38:39+05:30",
+                "backup_mode": "auth-only",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_archive_path(
+        make_args(
+            target="user@example.com",
+            from_archive=None,
+            email=None,
+            backup_dir=str(backup_dir),
+        )
+    )
+
+    assert resolved == archive.resolve()
+
+
+def test_resolve_archive_path_accepts_positional_archive_filename(tmp_path: Path) -> None:
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    archive = backup_dir / "2026-05-25-203839-user@example.com-antigravity.tar.gz"
+    archive.touch()
+
+    resolved = resolve_archive_path(
+        make_args(
+            target=archive.name,
+            from_archive=None,
+            email=None,
+            backup_dir=str(backup_dir),
+        )
+    )
+
+    assert resolved == archive.resolve()

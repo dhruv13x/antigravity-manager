@@ -35,18 +35,40 @@ def latest_backup_archive(backup_dir: Path, *, email: str | None = None) -> Path
     return entries[0].archive_path
 
 
+def _is_archive_target(value: str) -> bool:
+    return value.endswith(".tar.gz") or value.endswith(".tar.gz.gpg")
+
+
+def resolve_target_archive(backup_dir: Path, target: str) -> Path:
+    target_path = Path(target).expanduser()
+    if target_path.exists() or _is_archive_target(target):
+        archive_path = target_path
+        if not archive_path.exists() and not archive_path.is_absolute():
+            archive_path = backup_dir / target
+        return archive_path
+
+    latest_link = backup_dir / f"{target}-latest-antigravity.tar.gz"
+    if latest_link.exists():
+        return latest_link
+    return latest_backup_archive(backup_dir, email=target)
+
+
 def resolve_archive_path(args: Any) -> Path:
-    if getattr(args, "from_archive", None):
+    backup_dir = Path(args.backup_dir).expanduser()
+    target = getattr(args, "target", None)
+    if target:
+        archive_path = resolve_target_archive(backup_dir, target)
+    elif getattr(args, "from_archive", None):
         archive_path = Path(args.from_archive).expanduser()
     elif getattr(args, "email", None):
-        latest_link = Path(args.backup_dir).expanduser() / f"{args.email}-latest-antigravity.tar.gz"
+        latest_link = backup_dir / f"{args.email}-latest-antigravity.tar.gz"
         archive_path = (
             latest_link
             if latest_link.exists()
-            else latest_backup_archive(Path(args.backup_dir).expanduser(), email=args.email)
+            else latest_backup_archive(backup_dir, email=args.email)
         )
     else:
-        archive_path = latest_backup_archive(Path(args.backup_dir).expanduser())
+        archive_path = latest_backup_archive(backup_dir)
     if not archive_path.exists():
         raise FileNotFoundError(f"Backup archive does not exist: {archive_path}")
     return archive_path.resolve()

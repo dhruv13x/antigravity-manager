@@ -22,6 +22,7 @@ def test_cli_explicit_command_works() -> None:
     args = parser.parse_args(["status", "--json"])
     assert args.command == "status"
     assert args.json is True
+    assert args.no_save is False
 
 
 def test_cli_list_backups_defaults_to_latest_per_account() -> None:
@@ -33,6 +34,29 @@ def test_cli_list_backups_defaults_to_latest_per_account() -> None:
     args = parser.parse_args(["list-backups", "--all"])
     assert args.command == "list-backups"
     assert args.all is True
+
+
+def test_cli_use_accepts_target() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["use", "person@example.com"])
+    assert args.command == "use"
+    assert args.target == "person@example.com"
+
+
+def test_cli_restore_accepts_target_and_auth_only_flag() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["restore", "backup.tar.gz", "--auth-only"])
+    assert args.command == "restore"
+    assert args.target == "backup.tar.gz"
+    assert args.auth_only is True
+    assert args.full is None
+
+
+def test_cli_recommend_restore_flag() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["recommend", "--restore"])
+    assert args.command == "recommend"
+    assert args.restore is True
 
 
 def test_cli_shortcut_s_is_status() -> None:
