@@ -56,7 +56,7 @@ agm cooldown
 - **Smart Cooldown Tracking**: Evaluates the cooldown state of backups against your selected decision model (e.g., `Gemini 3.5 Flash`).
 - **One-Command Swapping**: Instantly rotate to the best available account via `agm recommend --use`.
 - **Safety First**: Automatically takes a safety backup before overwriting your active Antigravity CLI state.
-- **S3 Cloud Sync**: Safely sync your backup archive to any S3-compatible cloud storage (`agm sync`).
+- **B2 Cloud Sync**: Safely sync your backup archive to Backblaze B2 cloud storage (agm sync).
 
 ### Performance & UI
 - **Rich Terminal UI**: Visually premium outputs leveraging tables, semantic colors, and structured layouts for clear insights.
