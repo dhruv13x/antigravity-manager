@@ -1,3 +1,0 @@
-[console_scripts]
-agm = antigravity_manager.cli:main
-antigravity-manager = antigravity_manager.cli:main
