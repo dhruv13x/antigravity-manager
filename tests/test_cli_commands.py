@@ -22,7 +22,17 @@ def test_cli_remove(monkeypatch, tmp_path, capsys):
 def test_cli_profile(monkeypatch, tmp_path, capsys):
     import sys
 
-    monkeypatch.setattr(sys, "argv", ["agm", "profile", "export", "/tmp/p.tar.gz", "--dry-run"])
+    # Create a fake AGM_HOME
+    fake_agm_home = tmp_path / "agm-home"
+    fake_agm_home.mkdir()
+
+    # Monkeypatch AGM_HOME in both config and profile modules
+    monkeypatch.setattr("antigravity_manager.config.AGM_HOME", fake_agm_home)
+    monkeypatch.setattr("antigravity_manager.profile.AGM_HOME", fake_agm_home)
+
+    monkeypatch.setattr(
+        sys, "argv", ["agm", "profile", "export", str(tmp_path / "p.tar.gz"), "--dry-run"]
+    )
     main()
     captured = capsys.readouterr()
     assert "Would export profile" in captured.out
@@ -85,6 +95,14 @@ def test_cli_remove_yes(monkeypatch, tmp_path, capsys):
 
 def test_cli_profile_import(monkeypatch, tmp_path, capsys):
     import sys
+
+    # Create a fake AGM_HOME
+    fake_agm_home = tmp_path / "agm-home"
+    fake_agm_home.mkdir()
+
+    # Monkeypatch AGM_HOME in both config and profile modules
+    monkeypatch.setattr("antigravity_manager.config.AGM_HOME", fake_agm_home)
+    monkeypatch.setattr("antigravity_manager.profile.AGM_HOME", fake_agm_home)
 
     (tmp_path / "p.tar.gz").touch()
     monkeypatch.setattr(
