@@ -10,14 +10,16 @@ from . import __version__
 from .backup import backup_result_to_text, perform_backup
 from .config import (
     ANTIGRAVITY_HOME,
+    ANTIGRAVITY_SESSION_DIR,
     DEFAULT_BACKUP_DIR,
     DEFAULT_COOLDOWN_DISPLAY_LIMIT,
     DEFAULT_DECISION_MODEL,
+    GEMINI_CONFIG_DIR,
 )
 from .cooldown import evaluate_entries, format_remaining, print_statuses_table
 from .credentials import resolve_credentials
 from .doctor import print_doctor_table, run_doctor
-from .list_backups import list_backups, print_entries_table
+from .list_backups import list_backups, list_status_metadata, print_entries_table
 from .profile import export_profile, import_profile
 from .prune import perform_prune, prune_result_to_text
 from .prune_backups import perform_prune_backups
@@ -32,7 +34,7 @@ from .status import (
     parse_live_status_text,
     status_to_dict,
 )
-from .sync import pull_backup, push_backup, verify_cloud_connectivity
+from .sync import pull_backup, push_backup
 from .ui import banner, console, error_console, print_rich_help
 from .utils import build_archive_name
 
@@ -47,11 +49,7 @@ def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
         "created_at": status.captured_at.isoformat(),
         "captured_at": status.captured_at.isoformat(),
         "next_available_at": max(
-            (
-                model.refresh_at
-                for model in status.models
-                if model.refresh_at is not None
-            ),
+            (model.refresh_at for model in status.models if model.refresh_at is not None),
             default=status.captured_at,
         ).isoformat(),
         "archive_name": None,
@@ -59,9 +57,9 @@ def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
         "backup_mode": "status-only",
         "status": status_to_dict(status),
     }
-    metadata_path = backup_dir / build_archive_name(
-        status.captured_at, status.email
-    ).replace(".tar.gz", ".status.metadata.json")
+    metadata_path = backup_dir / build_archive_name(status.captured_at, status.email).replace(
+        ".tar.gz", ".status.metadata.json"
+    )
     backup_dir.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
     return metadata_path
@@ -283,6 +281,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--source-dir", default=str(ANTIGRAVITY_HOME), help="Antigravity CLI directory."
     )
     prune_parser.add_argument(
+        "--gemini-config-dir",
+        default=str(GEMINI_CONFIG_DIR),
+        help="Gemini project/session config directory.",
+    )
+    prune_parser.add_argument(
+        "--session-dir",
+        default=str(ANTIGRAVITY_SESSION_DIR),
+        help="Antigravity session symlink/config directory.",
+    )
+    prune_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be removed without deleting."
     )
 
@@ -308,7 +316,17 @@ def build_parser() -> argparse.ArgumentParser:
     purge_parser.add_argument(
         "--source-dir", default=str(ANTIGRAVITY_HOME), help="Antigravity CLI directory."
     )
-    purge_parser.add_argument("--yes", action="store_true", help="Confirm deletion.")
+    purge_parser.add_argument("-y", "--yes", action="store_true", help="Confirm deletion.")
+    purge_parser.add_argument(
+        "--gemini-config-dir",
+        default=str(GEMINI_CONFIG_DIR),
+        help="Gemini project/session config directory.",
+    )
+    purge_parser.add_argument(
+        "--session-dir",
+        default=str(ANTIGRAVITY_SESSION_DIR),
+        help="Antigravity session symlink/config directory.",
+    )
     purge_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be removed without deleting."
     )
@@ -318,7 +336,9 @@ def build_parser() -> argparse.ArgumentParser:
     remove_parser.add_argument(
         "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory."
     )
-    remove_parser.add_argument("--yes", action="store_true", help="Confirm removal without prompt.")
+    remove_parser.add_argument(
+        "-y", "--yes", action="store_true", help="Confirm removal without prompt."
+    )
     remove_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be removed without deleting."
     )
@@ -342,12 +362,6 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would sync without doing it."
     )
-
-    check_cloud_parser = subparsers.add_parser("check-cloud", help="Verify cloud credentials.")
-    check_cloud_parser.add_argument("--bucket-name", help="S3 bucket name.")
-    check_cloud_parser.add_argument("--endpoint-url", help="S3 endpoint URL.")
-    check_cloud_parser.add_argument("--access-key", help="S3 access key.")
-    check_cloud_parser.add_argument("--secret-key", help="S3 secret key.")
 
     return parser
 
@@ -413,7 +427,11 @@ def handle_restore(args: argparse.Namespace) -> None:
 
 
 def handle_cooldown(args: argparse.Namespace) -> None:
-    entries = list_backups(Path(args.backup_dir).expanduser(), latest_per_email=True)
+    backup_dir = Path(args.backup_dir).expanduser()
+    entries = [
+        *list_backups(backup_dir, latest_per_email=True),
+        *list_status_metadata(backup_dir, latest_per_email=True),
+    ]
     statuses = evaluate_entries(entries, decision_model=args.decision_model)[: args.limit]
     if args.json:
         console.print(
@@ -581,19 +599,6 @@ def handle_sync(args: argparse.Namespace) -> None:
         )
 
 
-def handle_check_cloud(args: argparse.Namespace) -> None:
-    access_key, secret_key, bucket_name, endpoint_url = resolve_credentials(args)
-    if verify_cloud_connectivity(
-        bucket_name=bucket_name,
-        endpoint_url=endpoint_url,
-        access_key=access_key,
-        secret_key=secret_key,
-    ):
-        console.print(f"[bold green]Successfully verified cloud access to {bucket_name}[/]")
-    else:
-        sys.exit(1)
-
-
 def main() -> None:
     # Handle main help manually to use Rich
     if len(sys.argv) == 1 or (len(sys.argv) == 2 and sys.argv[1] in ["-h", "--help"]):
@@ -657,7 +662,6 @@ def main() -> None:
         "remove": handle_remove,
         "profile": handle_profile,
         "sync": handle_sync,
-        "check-cloud": handle_check_cloud,
     }
     try:
         handlers[args.command](args)

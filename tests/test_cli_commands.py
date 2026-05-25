@@ -50,7 +50,27 @@ def test_cli_sync(monkeypatch, tmp_path, capsys):
 def test_cli_purge_yes(monkeypatch, tmp_path, capsys):
     import sys
 
-    monkeypatch.setattr(sys, "argv", ["agm", "purge", "--yes"])
+    source_dir = tmp_path / "antigravity"
+    config_dir = tmp_path / "config"
+    session_dir = tmp_path / "sessions"
+    source_dir.mkdir()
+    config_dir.mkdir()
+    session_dir.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "agm",
+            "purge",
+            "-y",
+            "--source-dir",
+            str(source_dir),
+            "--gemini-config-dir",
+            str(config_dir),
+            "--session-dir",
+            str(session_dir),
+        ],
+    )
     monkeypatch.setattr("antigravity_manager.purge.shutil.rmtree", lambda *a, **kw: None)
     monkeypatch.setattr("antigravity_manager.purge.Confirm.ask", lambda *a, **kw: True)
     main()
@@ -59,7 +79,7 @@ def test_cli_purge_yes(monkeypatch, tmp_path, capsys):
 def test_cli_remove_yes(monkeypatch, tmp_path, capsys):
     import sys
 
-    monkeypatch.setattr(sys, "argv", ["agm", "remove", "user@example.com", "--yes"])
+    monkeypatch.setattr(sys, "argv", ["agm", "remove", "user@example.com", "-y"])
     main()
 
 

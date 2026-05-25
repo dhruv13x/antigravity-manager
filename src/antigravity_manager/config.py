@@ -14,16 +14,19 @@ COOLDOWN_REGISTRY_PATH = AGM_HOME / "cooldown.json"
 SAFETY_BACKUP_DIR = AGM_HOME / "safety_backups"
 
 GEMINI_HOME = _home_from_env("GEMINI_HOME", "~/.gemini")
+GEMINI_CONFIG_DIR = _home_from_env("GEMINI_CONFIG_DIR", str(GEMINI_HOME / "config"))
 ANTIGRAVITY_HOME = _home_from_env(
     "ANTIGRAVITY_HOME",
     str(GEMINI_HOME / "antigravity-cli"),
 )
+ANTIGRAVITY_SESSION_DIR = _home_from_env("ANTIGRAVITY_SESSION_DIR", "~/.antigravitycli")
 
 ANTIGRAVITY_AUTH_FILES = (
     "antigravity-oauth-token",
     "installation_id",
     "settings.json",
     "keybindings.json",
+    "cache/onboarding.json",
 )
 
 EXCLUDED_TOP_LEVEL_NAMES = {

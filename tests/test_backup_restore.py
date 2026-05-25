@@ -30,6 +30,8 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any
     monkeypatch.setattr("antigravity_manager.restore.SAFETY_BACKUP_DIR", safety_dir)
 
     (source / "antigravity-oauth-token").write_text("new-token", encoding="utf-8")
+    (source / "cache").mkdir(parents=True, exist_ok=True)
+    (source / "cache" / "onboarding.json").write_text('{"done": true}', encoding="utf-8")
     (source / "settings.json").write_text("{}", encoding="utf-8")
     (source / "history.jsonl").write_text("not-auth", encoding="utf-8")
     (source / "google_accounts.json").write_text(
@@ -83,6 +85,7 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any
     with tarfile.open(archive_path, "r:gz") as tar:
         names = set(tar.getnames())
     assert "antigravity-cli/antigravity-oauth-token" in names
+    assert "antigravity-cli/cache/onboarding.json" in names
     assert "antigravity-cli/history.jsonl" not in names
     assert "gemini/google_accounts.json" not in names
 
@@ -100,6 +103,7 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any
     )
 
     assert (dest / "antigravity-oauth-token").read_text(encoding="utf-8") == "new-token"
+    assert (dest / "cache" / "onboarding.json").read_text(encoding="utf-8") == '{"done": true}'
     assert (
         json.loads((dest_gemini / "google_accounts.json").read_text(encoding="utf-8"))["active"]
         == "dest-root@example.com"

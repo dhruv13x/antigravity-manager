@@ -144,17 +144,16 @@ def evaluate_entries(
     decision_model: str = DEFAULT_DECISION_MODEL,
 ) -> list[CooldownStatus]:
     latest: dict[str, CooldownStatus] = {}
+    latest_seen_at: dict[str, datetime] = {}
     for entry in entries:
         status = evaluate_metadata(
-            entry.metadata, source="backup", now=now, decision_model=decision_model
+            entry.metadata, source=entry.source, now=now, decision_model=decision_model
         )
+        seen_at = parse_dt(entry.captured_at) or parse_dt(entry.created_at) or datetime.min
         existing = latest.get(status.email)
-        if existing is None or (
-            status.next_available_at is not None
-            and existing.next_available_at is not None
-            and status.next_available_at > existing.next_available_at
-        ):
+        if existing is None or seen_at >= latest_seen_at.get(status.email, datetime.min):
             latest[status.email] = status
+            latest_seen_at[status.email] = seen_at
 
     for email, record in load_registry().items():
         status = evaluate_metadata(
@@ -223,6 +222,8 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
     table.add_column("Next Reset", justify="right", style="dim")
 
     for status in statuses:
+        if status.email == "unknown":
+            continue
         if status.email == active_email:
             status_text = "[bold bright_green]ACTIVE[/]"
         elif status.status == "ready":

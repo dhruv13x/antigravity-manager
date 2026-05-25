@@ -20,36 +20,64 @@ def read_active_email(source_dir: Path) -> str | None:
     return active.strip() if isinstance(active, str) and active.strip() else None
 
 
-def safety_snapshot(source_dir: Path, *, dry_run: bool) -> Path | None:
-    if dry_run or not source_dir.exists():
+def _copy_snapshot_item(path: Path, snapshot_dir: Path, name: str) -> None:
+    target = snapshot_dir / name
+    if path.is_dir() and not path.is_symlink():
+        shutil.copytree(
+            path,
+            target,
+            symlinks=True,
+            ignore=shutil.ignore_patterns("log", "updater", "knowledge"),
+        )
+    else:
+        shutil.copy2(path, target)
+
+
+def safety_snapshot(
+    source_dir: Path, *, dry_run: bool, extra_paths: list[Path] | None = None
+) -> Path | None:
+    snapshot_paths = [
+        path for path in [source_dir, *(extra_paths or [])] if path.exists() or path.is_symlink()
+    ]
+    if dry_run or not snapshot_paths:
         return None
     email = read_active_email(source_dir) or "unknown"
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     snapshot_dir = SAFETY_BACKUP_DIR / f"{timestamp}-{safe_label(email)}-pre-purge-antigravity"
     snapshot_dir.mkdir(parents=True, exist_ok=False)
-    if source_dir.is_dir():
-        shutil.copytree(
-            source_dir,
-            snapshot_dir / "antigravity-cli",
-            symlinks=True,
-            ignore=shutil.ignore_patterns("log", "updater", "knowledge"),
-        )
-    else:
-        shutil.copy2(source_dir, snapshot_dir / source_dir.name)
+    if source_dir.exists() or source_dir.is_symlink():
+        _copy_snapshot_item(source_dir, snapshot_dir, "antigravity-cli")
+    for path in extra_paths or []:
+        if path.exists():
+            _copy_snapshot_item(path, snapshot_dir, safe_label(path.name))
     return snapshot_dir
 
 
 def perform_purge(args: Any) -> bool:
     source_dir = Path(args.source_dir).expanduser()
+    extra_paths = []
+    if getattr(args, "gemini_config_dir", None):
+        extra_paths.append(Path(args.gemini_config_dir).expanduser())
+    if getattr(args, "session_dir", None):
+        extra_paths.append(Path(args.session_dir).expanduser())
+    targets = [source_dir]
+    seen = {source_dir.resolve()}
+    for path in extra_paths:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        targets.append(path)
+        seen.add(resolved)
 
-    if not source_dir.exists():
-        console.print(
-            f"[yellow]Note:[/] Antigravity directory does not exist: [dim]{source_dir}[/]"
-        )
+    if not any(path.exists() or path.is_symlink() for path in targets):
+        console.print(f"[yellow]Note:[/] Antigravity state does not exist: [dim]{source_dir}[/]")
         return False
 
     if not args.yes and not args.dry_run:
-        console.print(f"\n[bold red]WARNING:[/] This will COMPLETELY DELETE [cyan]{source_dir}[/]")
+        console.print("\n[bold red]WARNING:[/] This will COMPLETELY DELETE Antigravity state.")
+        for path in targets:
+            if path.exists() or path.is_symlink():
+                console.print(f"Target: [cyan]{path}[/]")
         console.print(
             "[red]This includes your authentication, session history, and all account identity files.[/]"
         )
@@ -58,15 +86,20 @@ def perform_purge(args: Any) -> bool:
             return False
 
     if args.dry_run:
-        console.print(f"[bold yellow]Dry-run:[/] Would completely remove [cyan]{source_dir}[/]")
+        for path in targets:
+            if path.exists() or path.is_symlink():
+                console.print(f"[bold yellow]Dry-run:[/] Would completely remove [cyan]{path}[/]")
         return True
 
     try:
-        snapshot = safety_snapshot(source_dir, dry_run=False)
-        if source_dir.is_dir():
-            shutil.rmtree(source_dir)
-        else:
-            source_dir.unlink()
+        snapshot = safety_snapshot(source_dir, dry_run=False, extra_paths=extra_paths)
+        for path in targets:
+            if not path.exists() and not path.is_symlink():
+                continue
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
         if snapshot:
             console.print(f"[green]Safety backup:[/] {snapshot}")
         return True

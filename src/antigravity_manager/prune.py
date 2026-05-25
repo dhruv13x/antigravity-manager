@@ -35,7 +35,7 @@ class PrunePlan:
     directories: list[Path]
 
 
-def build_prune_plan(source_dir: Path) -> PrunePlan:
+def build_prune_plan(source_dir: Path, extra_dirs: list[Path] | None = None) -> PrunePlan:
     files: list[Path] = []
     directories: list[Path] = []
 
@@ -53,6 +53,16 @@ def build_prune_plan(source_dir: Path) -> PrunePlan:
     ):
         directories.append(cache_path)
 
+    seen = {path.resolve() for path in directories if path.exists()}
+    for path in extra_dirs or []:
+        if not path.exists():
+            continue
+        resolved = path.resolve()
+        if resolved == source_dir.resolve() or resolved in seen:
+            continue
+        directories.append(path)
+        seen.add(resolved)
+
     return PrunePlan(files=files, directories=directories)
 
 
@@ -61,12 +71,17 @@ def perform_prune(args: Any) -> PrunePlan:
     if not source_dir.exists() or not source_dir.is_dir():
         raise FileNotFoundError(f"Antigravity CLI directory does not exist: {source_dir}")
 
-    plan = build_prune_plan(source_dir)
+    extra_dirs = []
+    if getattr(args, "gemini_config_dir", None):
+        extra_dirs.append(Path(args.gemini_config_dir).expanduser())
+    if getattr(args, "session_dir", None):
+        extra_dirs.append(Path(args.session_dir).expanduser())
+    plan = build_prune_plan(source_dir, extra_dirs=extra_dirs)
     if args.dry_run:
         return plan
 
     for path in plan.files:
-        if path.exists():
+        if path.exists() or path.is_symlink():
             path.unlink()
 
     for path in plan.directories:

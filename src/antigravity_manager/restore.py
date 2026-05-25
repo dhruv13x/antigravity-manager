@@ -147,14 +147,14 @@ def backup_existing_file(path: Path, *, label: str) -> Path | None:
     backup_name = f"{safe_label(label)}-{path.name}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     backup_path = SAFETY_BACKUP_DIR / backup_name
     if path.is_dir() and not path.is_symlink():
-        shutil.copytree(path, backup_path)
+        shutil.copytree(path, backup_path, symlinks=True)
     else:
-        shutil.copy2(path, backup_path)
+        shutil.copy2(path, backup_path, follow_symlinks=False)
     return backup_path
 
 
 def copy_member_file(src: Path, dest: Path, *, dry_run: bool) -> Path | None:
-    if not src.exists():
+    if not src.exists() and not src.is_symlink():
         return None
     if dry_run:
         return None
@@ -163,9 +163,9 @@ def copy_member_file(src: Path, dest: Path, *, dry_run: bool) -> Path | None:
     if src.is_dir() and not src.is_symlink():
         if dest.exists():
             shutil.rmtree(dest)
-        shutil.copytree(src, dest)
+        shutil.copytree(src, dest, symlinks=True)
     else:
-        shutil.copy2(src, dest)
+        shutil.copy2(src, dest, follow_symlinks=False)
     return dest
 
 
@@ -226,7 +226,7 @@ def restore_full(
             shutil.move(str(antigravity_home), str(safety_path))
         else:
             shutil.rmtree(antigravity_home)
-    shutil.copytree(src, antigravity_home)
+    shutil.copytree(src, antigravity_home, symlinks=True)
     restore_auth_only(extracted_dir, antigravity_home, dry_run=False)
     return safety_path
 

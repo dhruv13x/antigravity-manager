@@ -1,7 +1,11 @@
 import json
 
 from antigravity_manager.cli import handle_list_backups
-from antigravity_manager.list_backups import build_backup_entry, list_backups
+from antigravity_manager.list_backups import (
+    build_backup_entry,
+    list_backups,
+    list_status_metadata,
+)
 
 
 def test_list_backups_latest(tmp_path):
@@ -93,3 +97,37 @@ def test_build_backup_entry_fail(tmp_path):
     p.touch()
     ent = build_backup_entry(p)
     assert ent is None
+
+
+def test_list_status_metadata_latest_per_email(tmp_path):
+    bdir = tmp_path / "backups"
+    bdir.mkdir()
+
+    for stamp, email in [
+        ("2024-01-01T00:00:00+00:00", "user@example.com"),
+        ("2024-01-02T00:00:00+00:00", "user@example.com"),
+        ("2024-01-03T00:00:00+00:00", "other@example.com"),
+    ]:
+        safe_stamp = stamp.replace(":", "").replace("+", "")
+        (bdir / f"{safe_stamp}-{email}-antigravity.status.metadata.json").write_text(
+            json.dumps(
+                {
+                    "record_type": "status",
+                    "email": email,
+                    "captured_at": stamp,
+                    "created_at": stamp,
+                    "backup_mode": "status-only",
+                    "product": "antigravity",
+                    "status": {"models": []},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    entries = list_status_metadata(bdir, latest_per_email=True)
+
+    assert len(entries) == 2
+    assert entries[0].email == "other@example.com"
+    user_entry = next(entry for entry in entries if entry.email == "user@example.com")
+    assert user_entry.captured_at == "2024-01-02T00:00:00+00:00"
+    assert user_entry.source == "status"

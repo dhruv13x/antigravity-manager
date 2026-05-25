@@ -2,9 +2,11 @@ from antigravity_manager.prune import perform_prune, prune_result_to_text
 
 
 class DummyArgs:
-    def __init__(self, sd, dr):
+    def __init__(self, sd, dr, gemini_config_dir=None, session_dir=None):
         self.source_dir = sd
         self.dry_run = dr
+        self.gemini_config_dir = gemini_config_dir
+        self.session_dir = session_dir
 
 
 def test_prune(tmp_path):
@@ -60,3 +62,19 @@ def test_prune_preserves_credentials_and_targets_new_dirs(tmp_path):
     second_plan = perform_prune(args)
     assert tmp_path / "cache" not in second_plan.directories
     assert (tmp_path / "cache" / "onboarding.json").exists()
+
+
+def test_prune_removes_broken_symlinks(tmp_path):
+    # Setup a broken symlink
+    target = tmp_path / "missing-target"
+    symlink = tmp_path / "cli.log"
+    symlink.symlink_to(target)
+    
+    assert symlink.is_symlink()
+    assert not symlink.exists()
+
+    args = DummyArgs(str(tmp_path), False)
+    perform_prune(args)
+
+    assert not symlink.is_symlink()
+    assert not symlink.exists()

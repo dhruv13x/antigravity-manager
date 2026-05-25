@@ -74,7 +74,6 @@ def print_rich_help() -> None:
         ("remove", "Remove all traces of a specific account."),
         ("profile", "Export or import manager profile."),
         ("sync", "Sync backups with S3 bucket."),
-        ("check-cloud", "Verify cloud credentials."),
     ]
 
     for cmd, desc in commands:

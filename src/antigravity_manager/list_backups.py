@@ -18,6 +18,7 @@ class BackupEntry:
     next_available_at: str
     backup_mode: str
     metadata: dict[str, Any]
+    source: str = "backup"
 
 
 def metadata_path_for_archive(archive_path: Path) -> Path:
@@ -79,6 +80,65 @@ def iter_backup_archives(backup_dir: Path) -> list[Path]:
     )
 
 
+def iter_status_metadata_files(backup_dir: Path) -> list[Path]:
+    if not backup_dir.exists():
+        return []
+    return sorted(
+        backup_dir.glob("*.status.metadata.json"), key=lambda path: path.name, reverse=True
+    )
+
+
+def build_status_metadata_entry(metadata_path: Path) -> BackupEntry | None:
+    try:
+        metadata = dict(json.loads(metadata_path.read_text(encoding="utf-8")))
+    except Exception:
+        return None
+    if metadata.get("product") != "antigravity":
+        return None
+    if metadata.get("record_type") != "status":
+        return None
+    return BackupEntry(
+        archive_path=metadata_path,
+        email=metadata.get("email", "unknown"),
+        plan=metadata.get("plan", "unknown"),
+        created_at=metadata.get("created_at", "unknown"),
+        captured_at=metadata.get("captured_at", "unknown"),
+        next_available_at=metadata.get("next_available_at", "unknown"),
+        backup_mode=metadata.get("backup_mode", "status-only"),
+        metadata=metadata,
+        source="status",
+    )
+
+
+def list_status_metadata(
+    backup_dir: Path,
+    *,
+    email: str | None = None,
+    latest_per_email: bool = False,
+) -> list[BackupEntry]:
+    entries = [
+        entry
+        for entry in (
+            build_status_metadata_entry(path) for path in iter_status_metadata_files(backup_dir)
+        )
+        if entry is not None
+    ]
+    if email:
+        entries = [entry for entry in entries if entry.email == email]
+
+    entries.sort(key=lambda entry: entry.captured_at or entry.created_at, reverse=True)
+    if latest_per_email:
+        seen: set[str] = set()
+        latest = []
+        for entry in entries:
+            if entry.email in seen:
+                continue
+            seen.add(entry.email)
+            latest.append(entry)
+        entries = latest
+    return entries
+
+
 def list_backups(
     backup_dir: Path,
     *,
@@ -125,6 +185,8 @@ def print_entries_table(entries: list[BackupEntry]) -> None:
     table.add_column("Next Available", justify="right", style="bright_yellow")
 
     for entry in entries:
+        if entry.email == "unknown":
+            continue
         table.add_row(
             entry.archive_path.name,
             entry.email,

@@ -141,10 +141,12 @@ def test_print_entries_table(capsys):
     out = capsys.readouterr().out
     assert "Antigravity Backups" in out
 
-    entry = BackupEntry(Path("/a"), "a@b.c", "Pro", "auth", "now", "later", "auth-only", {})
-    print_entries_table([entry])
+    entry1 = BackupEntry(Path("/a1"), "a@b.c", "Pro", "auth", "now", "later", "auth-only", {})
+    entry2 = BackupEntry(Path("/a2"), "unknown", "Pro", "auth", "now", "later", "auth-only", {})
+    print_entries_table([entry1, entry2])
     out = capsys.readouterr().out
     assert "a@b.c" in out
+    assert "unknown" not in out
 
 
 def test_print_statuses_table(capsys, monkeypatch):
@@ -162,12 +164,14 @@ def test_print_statuses_table(capsys, monkeypatch):
     s1 = CooldownStatus("a@b.c", "Pro", "ready", 1, 1, None, 0, "src", "dec", None, (m,))
     s2 = CooldownStatus("other", "Pro", "cooldown", 0, 1, None, 100, "src", "dec", None, (m,))
     s3 = CooldownStatus("other2", "Pro", "ready", 1, 1, None, 0, "src", "dec", None, (m,))
+    s4 = CooldownStatus("unknown", "Pro", "ready", 1, 1, None, 0, "src", "dec", None, (m,))
 
-    print_statuses_table([s1, s2, s3])
+    print_statuses_table([s1, s2, s3, s4])
     out = capsys.readouterr().out
     assert "ACTIVE" in out
     assert "COOLDOWN" in out
     assert "READY" in out
+    assert "unknown" not in out
 
 
 def test_print_doctor_table(capsys):

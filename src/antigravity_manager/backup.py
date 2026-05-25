@@ -187,7 +187,7 @@ def create_backup_archive(
                 include_bin=include_bin,
                 include_logs=include_logs,
             ):
-                tar.add(path, arcname=f"antigravity-cli/{path.name}", recursive=True)
+                tar.add(path, arcname=f"antigravity-cli/{path.relative_to(antigravity_home)}", recursive=True)
             tar.add(temp_metadata_path, arcname=temp_metadata_path.name, recursive=False)
 
 

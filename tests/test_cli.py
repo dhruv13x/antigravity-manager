@@ -59,6 +59,25 @@ def test_cli_recommend_restore_flag() -> None:
     assert args.restore is True
 
 
+def test_cli_short_yes_aliases() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["purge", "-y"])
+    assert args.command == "purge"
+    assert args.yes is True
+
+    args = parser.parse_args(["remove", "person@example.com", "-y"])
+    assert args.command == "remove"
+    assert args.yes is True
+
+
+def test_cli_check_cloud_removed() -> None:
+    import pytest
+
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["check-cloud"])
+
+
 def test_cli_shortcut_s_is_status() -> None:
     parser = build_parser()
     args = parser.parse_args(["-s"])
