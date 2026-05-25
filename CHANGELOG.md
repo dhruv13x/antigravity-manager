@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.0.0] - 2026-05-25
+### Documentation
+- update README.md to v3 gold standard (#11)
+- Add strategic ROADMAP.md (#10)
+
 ## [1.0.0] - 2026-05-25
 ### Other Changes
 - mock AGM_HOME in profile tests to fix CI failure
