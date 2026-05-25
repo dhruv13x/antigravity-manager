@@ -4,7 +4,7 @@ A living document balancing **Innovation**, **Stability**, and **Debt**.
 
 ## Strategy Overview
 1. **Prioritization**: Value vs. Effort Matrix.
-2. **Risk Assessment**: High/Medium/Low risk for each phase and feature.
+2. **Risk Assessment**: High/Medium/Low risk for each phase.
 3. **Dependencies**: Phased approach (e.g., Phase 2 requires Phase 1).
 
 ---
