@@ -165,7 +165,7 @@ uv run pytest
 
 # Run linters and formatters
 uv run ruff check
-uv run black .
+uv run ruff format .
 uv run mypy src
 ```
 
