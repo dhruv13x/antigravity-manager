@@ -1,5 +1,7 @@
 # Changelog
 
+## [5.0.0] - 2026-05-26
+
 ## [4.0.0] - 2026-05-26
 ### Features
 - consolidate account detection, implement cloud isolation and quota grouping, and enhance CLI state diagnostics
