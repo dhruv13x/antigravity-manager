@@ -15,7 +15,7 @@ from .config import (
 from .registry import update_registry_from_status
 from .status import LiveStatus, capture_tmux_status_text, parse_live_status_text, status_to_dict
 from .ui import RenderableType
-from .utils import build_archive_name, isoformat_local
+from .utils import build_archive_name, isoformat_local, read_active_email
 
 ESTIMATED_MODEL_RESET_HOURS = 5
 
@@ -53,16 +53,6 @@ def resolve_backup_anchor(
         "estimated_5h_no_model_reset_in_usage",
         model.model_name if model else None,
     )
-
-
-def read_active_email(antigravity_home: Path) -> str | None:
-    path = antigravity_home / "google_accounts.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    active = data.get("active")
-    return active.strip() if isinstance(active, str) and active.strip() else None
 
 
 def fallback_status(email: str | None) -> LiveStatus:

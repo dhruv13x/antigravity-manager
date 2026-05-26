@@ -67,6 +67,28 @@ def build_backup_entry(archive_path: Path) -> BackupEntry | None:
     )
 
 
+def build_backup_entry_from_metadata(metadata_path: Path) -> BackupEntry | None:
+    try:
+        metadata = dict(json.loads(metadata_path.read_text(encoding="utf-8")))
+    except Exception:
+        return None
+    if metadata.get("product") != "antigravity":
+        return None
+    if metadata.get("record_type") == "status":
+        return None
+    archive_name = str(metadata.get("archive_name") or metadata_path.name.replace(".metadata.json", ".tar.gz"))
+    return BackupEntry(
+        archive_path=metadata_path.with_name(archive_name),
+        email=metadata.get("email", "unknown"),
+        plan=metadata.get("plan", "unknown"),
+        created_at=metadata.get("created_at", "unknown"),
+        captured_at=metadata.get("captured_at", "unknown"),
+        next_available_at=metadata.get("next_available_at", "unknown"),
+        backup_mode=metadata.get("backup_mode", "unknown"),
+        metadata=metadata,
+    )
+
+
 def iter_backup_archives(backup_dir: Path) -> list[Path]:
     if not backup_dir.exists():
         return []
@@ -80,12 +102,29 @@ def iter_backup_archives(backup_dir: Path) -> list[Path]:
     )
 
 
-def iter_status_metadata_files(backup_dir: Path) -> list[Path]:
+def iter_backup_metadata_files(backup_dir: Path) -> list[Path]:
     if not backup_dir.exists():
         return []
     return sorted(
-        backup_dir.glob("*.status.metadata.json"), key=lambda path: path.name, reverse=True
+        [
+            path
+            for path in backup_dir.glob("*.metadata.json")
+            if not path.name.endswith(".status.metadata.json")
+        ],
+        key=lambda path: path.name,
+        reverse=True,
     )
+
+
+def iter_status_metadata_files(backup_dir: Path) -> list[Path]:
+    if not backup_dir.exists():
+        return []
+    paths = [
+        *backup_dir.glob("*.status.metadata.json"),
+        *backup_dir.glob("status/events/*.json"),
+        *backup_dir.glob("status/latest/*.status.json"),
+    ]
+    return sorted(paths, key=lambda path: str(path), reverse=True)
 
 
 def build_status_metadata_entry(metadata_path: Path) -> BackupEntry | None:
@@ -150,6 +189,15 @@ def list_backups(
         for entry in (build_backup_entry(path) for path in iter_backup_archives(backup_dir))
         if entry is not None
     ]
+    seen_archives = {entry.archive_path.name for entry in entries}
+    metadata_entries = [
+        entry
+        for entry in (
+            build_backup_entry_from_metadata(path) for path in iter_backup_metadata_files(backup_dir)
+        )
+        if entry is not None and entry.archive_path.name not in seen_archives
+    ]
+    entries.extend(metadata_entries)
     if email:
         entries = [entry for entry in entries if entry.email == email]
 

@@ -37,12 +37,22 @@ from .status import (
     parse_live_status_text,
     status_to_dict,
 )
-from .sync import pull_backup, push_backup
+from .sync import (
+    delete_cloud_account_objects,
+    delete_cloud_objects,
+    pull_backup,
+    pull_cloud_index,
+    push_backup,
+)
 from .ui import banner, console, error_console, print_rich_help
-from .utils import build_archive_name
+from .utils import build_archive_name, safe_label
 
 
 def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
+    next_available_at = max(
+        (model.refresh_at for model in status.models if model.refresh_at is not None),
+        default=status.captured_at,
+    )
     metadata = {
         "schema_version": 1,
         "product": "antigravity",
@@ -51,21 +61,55 @@ def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
         "plan": status.plan,
         "created_at": status.captured_at.isoformat(),
         "captured_at": status.captured_at.isoformat(),
-        "next_available_at": max(
-            (model.refresh_at for model in status.models if model.refresh_at is not None),
-            default=status.captured_at,
-        ).isoformat(),
+        "next_available_at": next_available_at.isoformat(),
         "archive_name": None,
         "archive_path": None,
         "backup_mode": "status-only",
         "status": status_to_dict(status),
     }
-    metadata_path = backup_dir / build_archive_name(status_metadata_timestamp(status), status.email).replace(
-        ".tar.gz", ".status.metadata.json"
+    metadata_text = json.dumps(metadata, indent=2, sort_keys=True)
+    event_path = status_event_metadata_path(
+        backup_dir,
+        email=status.email,
+        checked_at=status.captured_at,
+        ready_at=next_available_at,
+        state=status_state(status),
     )
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
-    return metadata_path
+    latest_path = status_latest_metadata_path(backup_dir, status.email)
+    event_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    event_path.write_text(metadata_text, encoding="utf-8")
+    latest_path.write_text(metadata_text, encoding="utf-8")
+    return event_path
+
+
+def status_event_metadata_path(
+    backup_dir: Path,
+    *,
+    email: str,
+    checked_at: datetime,
+    ready_at: datetime,
+    state: str,
+) -> Path:
+    checked = checked_at.isoformat(timespec="seconds").replace(":", "")
+    ready = ready_at.isoformat(timespec="seconds").replace(":", "")
+    name = (
+        f"status__email_{safe_label(email)}"
+        f"__checked_{checked}"
+        f"__ready_{ready}"
+        f"__state_{safe_label(state)}.json"
+    )
+    return backup_dir / "status" / "events" / name
+
+
+def status_latest_metadata_path(backup_dir: Path, email: str) -> Path:
+    return backup_dir / "status" / "latest" / f"{safe_label(email)}.status.json"
+
+
+def status_state(status: LiveStatus) -> str:
+    if any(model.is_available for model in status.models):
+        return "ready"
+    return "cooldown"
 
 
 def status_metadata_timestamp(status: LiveStatus) -> datetime:
@@ -101,6 +145,46 @@ def add_status_skip_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         dest="no_status_check",
         help="Skip live status capture before switching accounts.",
+    )
+
+
+def add_cloud_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--cloud", action="store_true", help="Read required metadata from cloud first.")
+    parser.add_argument("--bucket-name", help="B2/S3 bucket name.")
+    parser.add_argument("--endpoint-url", help="S3 endpoint URL.")
+    parser.add_argument("--access-key", help="S3 access key.")
+    parser.add_argument("--secret-key", help="S3 secret key.")
+
+
+def pull_cloud_index_if_requested(
+    args: argparse.Namespace, *, override_backup_dir: Path | None = None
+) -> None:
+    if not getattr(args, "cloud", False):
+        return
+    access_key, secret_key, bucket_name, endpoint_url = resolve_credentials(args)
+    pull_cloud_index(
+        backup_dir=override_backup_dir or Path(args.backup_dir).expanduser(),
+        bucket_name=bucket_name,
+        endpoint_url=endpoint_url,
+        access_key=access_key,
+        secret_key=secret_key,
+        dry_run=getattr(args, "dry_run", False),
+    )
+
+
+def pull_cloud_backup_if_requested(
+    args: argparse.Namespace, *, override_backup_dir: Path | None = None
+) -> None:
+    if not getattr(args, "cloud", False):
+        return
+    access_key, secret_key, bucket_name, endpoint_url = resolve_credentials(args)
+    pull_backup(
+        backup_dir=override_backup_dir or Path(args.backup_dir).expanduser(),
+        bucket_name=bucket_name,
+        endpoint_url=endpoint_url,
+        access_key=access_key,
+        secret_key=secret_key,
+        dry_run=getattr(args, "dry_run", False),
     )
 
 
@@ -239,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
     restore_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be restored."
     )
+    add_cloud_args(restore_parser)
     add_status_skip_args(restore_parser)
     add_tmux_args(restore_parser)
 
@@ -257,6 +342,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model used to decide READY/COOLDOWN.",
     )
     cooldown_parser.add_argument("--json", action="store_true", help="Print JSON output.")
+    add_cloud_args(cooldown_parser)
 
     list_parser = subparsers.add_parser("list-backups", help="List Antigravity backups.")
     list_parser.add_argument(
@@ -274,6 +360,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     list_parser.add_argument("--json", action="store_true", help="Print JSON output.")
+    add_cloud_args(list_parser)
 
     recommend_parser = subparsers.add_parser(
         "recommend", help="Recommend the best account to use next."
@@ -306,6 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
     recommend_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be restored with --use."
     )
+    add_cloud_args(recommend_parser)
     add_status_skip_args(recommend_parser)
     add_tmux_args(recommend_parser)
 
@@ -325,6 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     use_parser.add_argument("--dry-run", action="store_true", help="Show what would be restored.")
+    add_cloud_args(use_parser)
     add_status_skip_args(use_parser)
     add_tmux_args(use_parser)
 
@@ -379,6 +468,7 @@ def build_parser() -> argparse.ArgumentParser:
     prune_backups_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be removed without deleting."
     )
+    add_cloud_args(prune_backups_parser)
 
     purge_parser = subparsers.add_parser("purge", help="Completely reset Antigravity state.")
     purge_parser.add_argument(
@@ -410,6 +500,7 @@ def build_parser() -> argparse.ArgumentParser:
     remove_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be removed without deleting."
     )
+    add_cloud_args(remove_parser)
 
     profile_parser = subparsers.add_parser("profile", help="Export or import manager profile.")
     profile_parser.add_argument("action", choices=["export", "import"], help="Action to perform.")
@@ -482,6 +573,7 @@ def handle_restore(args: argparse.Namespace) -> None:
         raise ValueError("Use either --auth-only or --full, not both.")
     if getattr(args, "full", None) is None:
         args.full = not getattr(args, "auth_only", False)
+    pull_cloud_backup_if_requested(args)
     capture_and_save_current_status(args)
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
     save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
@@ -498,6 +590,7 @@ def handle_restore(args: argparse.Namespace) -> None:
 
 
 def handle_cooldown(args: argparse.Namespace) -> None:
+    pull_cloud_index_if_requested(args)
     backup_dir = Path(args.backup_dir).expanduser()
     entries = [
         *list_backups(backup_dir, latest_per_email=True),
@@ -513,22 +606,42 @@ def handle_cooldown(args: argparse.Namespace) -> None:
 
 
 def handle_list_backups(args: argparse.Namespace) -> None:
-    entries = list_backups(
-        Path(args.backup_dir).expanduser(),
-        email=args.email,
-        latest_per_email=not getattr(args, "all", False),
-    )
-    if args.json:
-        console.print(
-            json.dumps([asdict(item) for item in entries], indent=2, default=str), markup=False
-        )
+    if getattr(args, "cloud", False):
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="agm-cloud-list-") as tmp_dir:
+            backup_dir = Path(tmp_dir)
+            pull_cloud_index_if_requested(args, override_backup_dir=backup_dir)
+            entries = list_backups(
+                backup_dir,
+                email=args.email,
+                latest_per_email=not getattr(args, "all", False),
+            )
+            if args.json:
+                console.print(
+                    json.dumps([asdict(item) for item in entries], indent=2, default=str),
+                    markup=False,
+                )
+            else:
+                print_entries_table(entries)
     else:
-        print_entries_table(entries)
+        entries = list_backups(
+            Path(args.backup_dir).expanduser(),
+            email=args.email,
+            latest_per_email=not getattr(args, "all", False),
+        )
+        if args.json:
+            console.print(
+                json.dumps([asdict(item) for item in entries], indent=2, default=str), markup=False
+            )
+        else:
+            print_entries_table(entries)
 
 
 def handle_recommend(args: argparse.Namespace) -> None:
     if args.use and args.restore:
         raise ValueError("Use either --use or --restore, not both.")
+    pull_cloud_index_if_requested(args)
     backup_dir = Path(args.backup_dir).expanduser()
     entries = [
         *list_backups(backup_dir, latest_per_email=True),
@@ -563,6 +676,7 @@ def handle_recommend(args: argparse.Namespace) -> None:
         args.full = False
         args.force = False
         args.from_archive = None
+        pull_cloud_backup_if_requested(args)
         handle_use(args)
     elif args.restore:
         args.target = selected.email
@@ -571,6 +685,7 @@ def handle_recommend(args: argparse.Namespace) -> None:
         args.full = True
         args.force = False
         args.from_archive = None
+        pull_cloud_backup_if_requested(args)
         handle_restore(args)
 
 
@@ -579,6 +694,7 @@ def handle_use(args: argparse.Namespace) -> None:
     args.force = False
     args.from_archive = None
     args.email = None
+    pull_cloud_backup_if_requested(args)
     capture_and_save_current_status(args)
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
     save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
@@ -620,12 +736,36 @@ def handle_prune(args: argparse.Namespace) -> None:
 
 
 def handle_prune_backups(args: argparse.Namespace) -> None:
-    perform_prune_backups(
-        backup_dir=Path(args.backup_dir).expanduser(),
-        keep=args.keep,
-        keep_latest_per_email=args.keep_latest_per_email,
-        dry_run=args.dry_run,
-    )
+    if getattr(args, "cloud", False):
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="agm-cloud-prune-") as tmp_dir:
+            backup_dir = Path(tmp_dir)
+            pull_cloud_index_if_requested(args, override_backup_dir=backup_dir)
+            deleted_paths = perform_prune_backups(
+                backup_dir=backup_dir,
+                keep=args.keep,
+                keep_latest_per_email=args.keep_latest_per_email,
+                dry_run=args.dry_run,
+            )
+            if deleted_paths:
+                object_names = [str(path.relative_to(backup_dir)) for path in deleted_paths]
+                access_key, secret_key, bucket_name, endpoint_url = resolve_credentials(args)
+                delete_cloud_objects(
+                    object_names=object_names,
+                    bucket_name=bucket_name,
+                    endpoint_url=endpoint_url,
+                    access_key=access_key,
+                    secret_key=secret_key,
+                    dry_run=args.dry_run,
+                )
+    else:
+        deleted_paths = perform_prune_backups(
+            backup_dir=Path(args.backup_dir).expanduser(),
+            keep=args.keep,
+            keep_latest_per_email=args.keep_latest_per_email,
+            dry_run=args.dry_run,
+        )
 
 
 def handle_purge(args: argparse.Namespace) -> None:
@@ -637,8 +777,35 @@ def handle_purge(args: argparse.Namespace) -> None:
 
 def handle_remove(args: argparse.Namespace) -> None:
     args.dry_run = getattr(args, "dry_run", False) or not getattr(args, "yes", False)
-    results = perform_remove(args)
-    console.print(remove_result_to_text(results, email=args.email, dry_run=args.dry_run))
+    if getattr(args, "cloud", False):
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="agm-cloud-remove-") as tmp_dir:
+            backup_dir = Path(tmp_dir)
+            pull_cloud_index_if_requested(args, override_backup_dir=backup_dir)
+
+            # We need to simulate the local remove but for cloud objects
+            # perform_remove looks at the backup_dir to find files to delete.
+            # We must override args.backup_dir temporarily for the function call.
+            original_backup_dir = args.backup_dir
+            args.backup_dir = str(backup_dir)
+            results = perform_remove(args)
+            args.backup_dir = original_backup_dir
+
+            access_key, secret_key, bucket_name, endpoint_url = resolve_credentials(args)
+            results["cloud_files_removed"] = delete_cloud_account_objects(
+                email=args.email,
+                bucket_name=bucket_name,
+                endpoint_url=endpoint_url,
+                access_key=access_key,
+                secret_key=secret_key,
+                dry_run=args.dry_run,
+            )
+            # For cloud-only mode, we don't report local files removed (which should be 0 anyway)
+            console.print(remove_result_to_text(results, email=args.email, dry_run=args.dry_run))
+    else:
+        results = perform_remove(args)
+        console.print(remove_result_to_text(results, email=args.email, dry_run=args.dry_run))
 
 
 def handle_profile(args: argparse.Namespace) -> None:

@@ -99,6 +99,32 @@ def test_build_backup_entry_fail(tmp_path):
     assert ent is None
 
 
+def test_list_backups_reads_cloud_index_metadata_without_archive(tmp_path):
+    bdir = tmp_path / "backups"
+    bdir.mkdir()
+    (bdir / "2026-05-26-user@example.com-antigravity.metadata.json").write_text(
+        json.dumps(
+            {
+                "product": "antigravity",
+                "email": "user@example.com",
+                "plan": "Pro",
+                "created_at": "2026-05-26T10:00:00+05:30",
+                "captured_at": "2026-05-26T10:00:00+05:30",
+                "next_available_at": "2026-05-26T15:00:00+05:30",
+                "backup_mode": "auth-only",
+                "archive_name": "2026-05-26-user@example.com-antigravity.tar.gz",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    entries = list_backups(bdir)
+
+    assert len(entries) == 1
+    assert entries[0].email == "user@example.com"
+    assert entries[0].archive_path.name == "2026-05-26-user@example.com-antigravity.tar.gz"
+
+
 def test_list_status_metadata_latest_per_email(tmp_path):
     bdir = tmp_path / "backups"
     bdir.mkdir()
@@ -131,3 +157,34 @@ def test_list_status_metadata_latest_per_email(tmp_path):
     user_entry = next(entry for entry in entries if entry.email == "user@example.com")
     assert user_entry.captured_at == "2024-01-02T00:00:00+00:00"
     assert user_entry.source == "status"
+
+
+def test_list_status_metadata_reads_new_status_layout(tmp_path):
+    bdir = tmp_path / "backups"
+    events = bdir / "status" / "events"
+    latest = bdir / "status" / "latest"
+    events.mkdir(parents=True)
+    latest.mkdir(parents=True)
+    payload = {
+        "record_type": "status",
+        "email": "user@example.com",
+        "captured_at": "2026-05-26T10:00:00+05:30",
+        "created_at": "2026-05-26T10:00:00+05:30",
+        "backup_mode": "status-only",
+        "product": "antigravity",
+        "status": {"models": []},
+    }
+    (events / "status__email_user@example.com__checked_2026.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+    (latest / "user@example.com.status.json").write_text(
+        json.dumps({**payload, "captured_at": "2026-05-26T11:00:00+05:30"}),
+        encoding="utf-8",
+    )
+
+    entries = list_status_metadata(bdir, latest_per_email=True)
+
+    assert len(entries) == 1
+    assert entries[0].email == "user@example.com"
+    assert entries[0].captured_at == "2026-05-26T11:00:00+05:30"

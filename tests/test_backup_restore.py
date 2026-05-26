@@ -33,6 +33,7 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any
     dest.mkdir()
     dest_gemini.mkdir()
     safety_dir = tmp_path / "safety"
+    monkeypatch.setattr("antigravity_manager.config.ACTIVE_ACCOUNT_PATH", tmp_path / "active.json")
     monkeypatch.setattr("antigravity_manager.restore.SAFETY_BACKUP_DIR", safety_dir)
 
     (source / "antigravity-oauth-token").write_text("new-token", encoding="utf-8")
@@ -299,7 +300,7 @@ def test_snapshot_current_state_uses_manager_active_email(tmp_path: Path, monkey
     active_path = tmp_path / "active.json"
     active_path.write_text(json.dumps({"email": "active@example.com"}), encoding="utf-8")
     monkeypatch.setattr("antigravity_manager.restore.SAFETY_BACKUP_DIR", safety_dir)
-    monkeypatch.setattr("antigravity_manager.restore.ACTIVE_ACCOUNT_PATH", active_path)
+    monkeypatch.setattr("antigravity_manager.config.ACTIVE_ACCOUNT_PATH", active_path)
 
     snapshot = snapshot_current_state(antigravity_home=antigravity_home, dry_run=False)
 
@@ -340,6 +341,7 @@ def test_perform_full_restore_creates_one_safety_archive(
     (dest / "google_accounts.json").write_text(
         json.dumps({"active": "current@example.com"}), encoding="utf-8"
     )
+    monkeypatch.setattr("antigravity_manager.config.ACTIVE_ACCOUNT_PATH", tmp_path / "active_none.json")
 
     archive_path = backup_dir / "2026-05-26-145104-next@example.com-antigravity.tar.gz"
     with tarfile.open(archive_path, "w:gz") as tar:

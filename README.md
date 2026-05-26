@@ -1,179 +1,332 @@
+```markdown
 # 🌌 Antigravity Manager
 
-**The definitive account backup, restore, cooldown, and orchestration manager for Antigravity CLI.**
+A stateful command-line tool for backup, restore, cooldown tracking, account rotation, cloud sync, and safety recovery for the Antigravity CLI.
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/dhruv13x/antigravity-manager/main.yml?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)
-![Python Version](https://img.shields.io/badge/python-%3E%3D3.12-blue?style=flat-square)
-![Code Style: Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)
-![Maintenance Status](https://img.shields.io/badge/maintenance-active-success.svg?style=flat-square)
+It is designed for operators who manage multiple Antigravity accounts across one or more machines and need a clean, reliable, and low-friction workflow.
 
----
+## What it gives you
 
-## ⚡ Quick Start (The "5-Minute Rule")
+- Live status capture from the Antigravity CLI using tmux
+- Cooldown-aware account orchestration with account readiness tracking
+- Relative-time dashboards that are easier to scan than raw timestamps
+- Cloud-aware state reconciliation for local + remote backup inventories
+- Safety-first restore and purge flows with automatic recovery points
+- Rich terminal output that is readable in a real shell, not just in logs
+- Machine-readable JSON output for scripting and automation
+
+## Key behavior
+
+### `agm status`
+
+Captures the current state of the Antigravity CLI and shows:
+
+- active account
+- plan
+- capture time
+- model quota status
+- cooldown / ready state
+- refresh timing
+
+The status command now handles real-world CLI conditions more gracefully, including:
+
+- login-required states
+- first-time onboarding states
+- slow startup windows
+- clearer failure guidance instead of generic timeout-style behavior
+
+### `agm cooldown`
+
+Shows a consolidated account readiness table with:
+
+- grouped model usage
+- deduplicated cooldown rows
+- current account state
+- next reset timing
+- relative Last Checked values like `2m ago`, `1h ago`, `1d ago`
+
+This makes the dashboard much faster to read than absolute timestamps.
+
+### `agm backup`
+
+Creates a backup archive of the Antigravity CLI state and writes metadata that can be used later for:
+
+- restore
+- cooldown evaluation
+- recommendation
+- cloud sync
+
+Backups are timestamped and can be anchored to the decision model used for availability calculations.
+
+### `agm recommend`
+
+Evaluates which account is ready next and helps you choose the best available one.
+
+### `agm recommend --use`
+
+Switches to the recommended account immediately.
+
+### `agm restore <email>` / `agm use <email>`
+
+Restores an account from an existing backup. `use` is a specialized auth-only restore for quick account switching.
+
+### `agm purge -y`
+
+Factory-resets the Antigravity home after creating a safety backup first.
+
+### `agm sync push` / `agm sync pull`
+
+Synchronizes local backup state with cloud storage.
+
+### `agm prune` / `agm prune-backups`
+
+Cleans runtime and backup-related state (archives, metadata, and status events) without destroying the parts that must remain intact, such as authentication and persistent manager state.
+
+### `agm list-backups`
+
+Lists known backups locally.
+
+### `agm list-backups --cloud`
+
+Shows the cloud inventory only, without mixing local artifacts into the view.
+
+## Quick start
 
 ### Prerequisites
-- Python >= 3.12
-- [uv](https://github.com/astral-sh/uv) (recommended) or pip
-- Installed Antigravity CLI at `~/.gemini/antigravity-cli` (default)
+
+- Python 3.12 or newer
+- tmux for live status capture
+- uv recommended, or pip
+- Antigravity CLI installed at `~/.gemini/antigravity-cli` by default
 
 ### Install
+
 ```bash
 git clone https://github.com/dhruv13x/antigravity-manager.git
 cd antigravity-manager
 uv pip install .
 ```
 
-### Run
+Or with pip:
+
 ```bash
-# Display the default cooldown dashboard
+pip install .
+```
+
+### Run
+
+```bash
 agm
 ```
 
-### Demo
-*(![CLI Demo](assets/demo.gif))*
+The default command opens the cooldown dashboard.
+
+## Typical workflow
 
 ```bash
-# 1. Back up your current active account
-agm backup --auth-only --decision-model "Gemini 3.5 Flash"
+# Check the live state of the current Antigravity session
+agm status
 
-# 2. Get a recommendation for which account to use next
-agm recommend
+# Save the current account state
+agm backup
 
-# 3. Immediately switch to the recommended account
+# Inspect all known accounts and their readiness
+agm cooldown
+
+# View local backup inventory
+agm list-backups
+
+# View only cloud-backed inventory
+agm list-backups --cloud
+
+# Sync local state to cloud
+agm sync push
+
+# Pull cloud state back locally
+agm sync pull
+
+# Rotate to the best available account
 agm recommend --use
 
-# 4. Check status and cooldowns
-agm status
-agm cooldown
+# Recover from a bad reset or login loss
+agm restore someone@example.com
 ```
 
----
+## Features
 
-## ✨ Features (The "Why")
+### Smart orchestration
 
-### Core Orchestration
-- **Smart Cooldown Tracking**: Evaluates the cooldown state of backups against your selected decision model (e.g., `Gemini 3.5 Flash`).
-- **One-Command Swapping**: Instantly rotate to the best available account via `agm recommend --use`.
-- **Safety First**: Automatically takes a safety backup before overwriting your active Antigravity CLI state.
-- **B2 Cloud Sync**: Safely sync your backup archive to Backblaze B2 cloud storage (agm sync).
+- **Deduplicated cooldown dashboard**: groups models that share the same quota/reset timing so the table stays compact.
+- **One-command switching**: rotate to a ready account using `agm recommend --use`.
+- **Merged local + cloud reasoning**: uses the latest known state across local and remote metadata when evaluating readiness.
 
-### Performance & UI
-- **Rich Terminal UI**: Visually premium outputs leveraging tables, semantic colors, and structured layouts for clear insights.
-- **Lightning Fast**: Built on Python 3.12 and rigorously typed for fast execution.
-- **Machine-Readable**: Every major command supports `--json` for seamless script integration.
+### Safety and reliability
 
-### Security
-- **Auth-Only Backups**: Limit backups to only vital identity and settings files with `--auth-only`.
-- **GPG Encryption**: Encrypt your critical credentials on disk using `--encrypt`.
+- **CLI state detection**: distinguishes prompt, login, and onboarding states.
+- **Grace period for startup**: avoids false failures when the CLI starts slowly.
+- **Automatic safety backups**: destructive operations create recovery points before modifying state.
+- **Preserved identity state**: cleanup commands avoid removing authentication and persistent manager data unless explicitly intended.
 
----
+### Maintenance and lifecycle control
 
-## 🛠️ Configuration (The "How")
+- **Targeted pruning**: remove redundant backup artifacts while preserving required state.
+- **Cloud isolation mode**: inspect remote backup data without contaminating local views.
+- **Cloud sync support**: keep backup archives and metadata mirrored across machines.
 
-### Environment Variables
+### Terminal UX
 
-| Variable | Description | Default | Required |
-| :--- | :--- | :--- | :--- |
-| `AGM_HOME` | Base directory for manager state. | `~/.antigravity-manager` | No |
-| `GEMINI_HOME` | Base directory for Gemini tools. | `~/.gemini` | No |
-| `ANTIGRAVITY_HOME` | Location of the Antigravity CLI. | `$GEMINI_HOME/antigravity-cli` | No |
-| `ANTIGRAVITY_SESSION_DIR` | Location of session symlink/config. | `~/.antigravitycli` | No |
-| `GEMINI_CONFIG_DIR` | Gemini project/session config dir. | `$GEMINI_HOME/config` | No |
+- **Rich output**: tables, semantic colors, and readable layout.
+- **Relative freshness labels**: Last Checked is shown as `2m ago`, `3h ago`, etc.
+- **Script-friendly output**: major commands support `--json`.
 
-### Key CLI Arguments
+## Command reference
 
-| Flag | Command | Description |
-| :--- | :--- | :--- |
-| `-c`, `--cooldown` | `(Global)` | Shortcut for 'cooldown' command (default). |
-| `-s`, `--status` | `(Global)` | Shortcut for 'status' command. |
-| `--auth-only` | `backup`, `restore` | Archive/restore only identity and auth files. |
-| `--full` | `restore` | Restore the full Antigravity state directory. |
-| `--decision-model` | `backup`, `recommend` | The LLM model to anchor timestamps and recommendations. |
-| `--dry-run` | `(Most)` | Simulate the command and show what would happen. |
-| `--json` | `(Most)` | Output results as structured JSON instead of Rich UI. |
+### Global shortcuts
 
----
+| Flag | Description |
+|------|-------------|
+| `-c`, `--cooldown` | Shortcut for cooldown |
+| `-s`, `--status` | Shortcut for status |
+| `--json` | Output structured JSON instead of Rich tables |
 
-## 🏗️ Architecture
+### Backup and restore
 
-### Directory Tree
+| Command / Flag | Description |
+|----------------|-------------|
+| `agm backup` | Create a backup archive and metadata |
+| `--auth-only` | Backup only identity/auth files |
+| `--full` | Restore the full Antigravity state directory |
+| `agm restore <email>` | Restore an account from backup |
+| `agm purge -y` | Factory reset after creating a safety backup |
+
+### Status and orchestration
+
+| Command / Flag | Description |
+|----------------|-------------|
+| `agm status` | Capture and display live CLI state |
+| `agm cooldown` | Show readiness and cooldown dashboard |
+| `agm recommend` | Evaluate the best account to use next |
+| `agm recommend --use` | Switch immediately to the recommended account |
+| `--decision-model` | Anchor timestamps and decisions to a specific model |
+
+### Backup inventory and cloud sync
+
+| Command / Flag | Description |
+|----------------|-------------|
+| `agm list-backups` | List local backups |
+| `agm list-backups --cloud` | List cloud-only backups |
+| `agm sync push` | Push local state to cloud storage |
+| `agm sync pull` | Pull cloud state into the local workspace |
+| `agm prune` | Clean local runtime state |
+| `agm prune-backups` | Trim backup-related state and history |
+| `--cloud` | Operate on remote state where supported |
+
+## Configuration
+
+### Environment variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AGM_HOME` | Base directory for manager state | `~/.antigravity-manager` |
+| `GEMINI_HOME` | Base directory for Gemini tooling | `~/.gemini` |
+| `ANTIGRAVITY_HOME` | Location of the Antigravity CLI | `$GEMINI_HOME/antigravity-cli` |
+| `ANTIGRAVITY_SESSION_DIR` | Session symlink/config location | `~/.antigravitycli` |
+| `GEMINI_CONFIG_DIR` | Gemini project/session config directory | `$GEMINI_HOME/config` |
+
+Cloud storage credentials and provider settings are resolved from your environment and the configured sync backend.
+
+## How it works
+
+1. **State capture**: `agm status` opens a headless tmux session, inspects the CLI state, and extracts readiness/cooldown information.
+2. **Archival**: `agm backup` bundles the Antigravity CLI state into a timestamped archive and records metadata for later evaluation.
+3. **Orchestration**: `agm cooldown` and `agm recommend` evaluate local and cloud metadata to determine which accounts are ready.
+4. **Restoration**: `agm restore` or `agm use` recreates a working account state from a backup, with safety recovery points automatically generated before any destructive operations.
+5. **Lifecycle cleanup**: `agm prune`, `agm prune-backups`, and `agm sync` keep the workspace and cloud inventory consistent without losing important identity state.
+
+## Output examples
+
+### Live status
 
 ```text
-src/antigravity_manager/
-├── __init__.py       # Package definition
-├── cli.py            # Main CLI entrypoint (argparse)
-├── config.py         # Environment variables & constants
-├── ui.py             # Rich console output formatting
-├── utils.py          # Path expansions & file helpers
-├── credentials.py    # S3 Sync credential resolution
-├── registry.py       # Metadata saving & tracking
-├── status.py         # tmux capture & /usage parsing
-├── backup.py         # Backup creation logic
-├── restore.py        # Safety backups & restoration
-├── cooldown.py       # Cooldown evaluation logic
-├── list_backups.py   # Inventory management
-├── prune.py          # State cleanup
-├── sync.py           # S3 push/pull integration
-└── ...
+Captured At: 2026-05-26 18:32:16 IST
+
+Models:
+ Gemini 3.5 Flash (Medium)     60% Cooldown  Refreshes in 167h 32m
+ Claude Sonnet 4.6 (Thinking)   0% Cooldown  Refreshes in 167h 26m
 ```
 
-### Flow
+### Cooldown dashboard (Smart Grouping)
 
-1. **State Capture**: `agm status` drops into a headless tmux session, runs `/usage` in Antigravity, and extracts cooldown reset timers.
-2. **Archival**: `agm backup` bundles `~/.gemini/antigravity-cli` auth files into a `.tar.gz` and stamps it with the extracted cooldown timer in its metadata.
-3. **Orchestration**: `agm cooldown` & `agm recommend` scan the local backup directory metadata, evaluating remaining seconds until an account is "Ready".
-4. **Restoration**: `agm use <account>` generates a safety backup of the current state, purges the old state, and unpacks the requested `.tar.gz`.
-
----
-
-## 🐞 Troubleshooting
-
-### Common Issues
-
-| Error Message | Solution |
-| :--- | :--- |
-| `Use either --auth-only or --full, not both.` | These flags are mutually exclusive. Choose whether to replace the whole dir (`--full`) or just the identity files (`--auth-only`). |
-| `Use either --use or --restore, not both.` | `agm recommend` can only trigger one post-action. `--use` is an auth-only restore; `--restore` is a full restore. |
-| `No account status or backup metadata found.` | You must run `agm backup` or `agm status` at least once before requesting a recommendation. |
-| `tmux: command not found` | `agm status` relies on `tmux` to capture live CLI output. Ensure tmux is installed via your package manager. |
-
-### Debug Mode
-
-To integrate with scripts or see raw data structures without UI formatting, append the `--json` flag to commands.
-
-```bash
-agm doctor --json
+```text
+Account                      Status     Usage                     Last Checked
+user1@example.com            READY      G3.5F High   100% Ready         1h ago
+user2@example.com            COOLDOWN   G3.5F High     0% 5d2h46m       1d ago
+                                        Son4.6 Think  60% Ready
+active@example.com           ACTIVE     G3.5F High    60% 6d23h32m      2m ago
+                                        Son4.6 Think   0% 6d23h27m
 ```
 
----
+### Sync behavior
 
-## 🤝 Contributing
+```
+Skipping existing backup, already present in cloud.
+Uploading new archive...
+Successfully uploaded status and metadata files.
+```
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+## Troubleshooting
 
-### Developer Setup
+| Error message | What it usually means |
+|---------------|----------------------|
+| `Antigravity CLI requires login.` | The CLI is at a login screen or session is not authenticated |
+| `Antigravity CLI is in first-time setup mode.` | Finish onboarding in `agy` before using `agm status` |
+| `Use either --auth-only or --full, not both.` | Those restore modes are mutually exclusive |
+| `No account status found.` | Run `agm backup` or `agm status` first |
+| `tmux: command not found` | Install tmux so live status capture can work |
 
-This project uses `uv` for dependency management and requires Python 3.12+.
+## Developer setup
 
 ```bash
-# Install dev dependencies
 uv pip install -e ".[dev]"
-
-# Run tests with coverage
 uv run pytest
-
-# Run linters and formatters
 uv run ruff check
 uv run ruff format .
 uv run mypy src
 ```
 
----
+## Repository layout
 
-## 🗺️ Roadmap
+```
+src/antigravity_manager/
+├── cli.py
+├── config.py
+├── ui.py
+├── utils.py
+├── credentials.py
+├── registry.py
+├── status.py
+├── backup.py
+├── restore.py
+├── cooldown.py
+├── list_backups.py
+├── prune.py
+├── sync.py
+└── ...
+```
 
-- [ ] Support for multiple backup encryption keys.
-- [ ] Direct API integration to bypass `tmux` status scraping.
-- [ ] Webhook notifications on account readiness.
-- [ ] Automated daemon mode for continuous account rotation.
+## Roadmap
+
+- Add more backup encryption options
+- Reduce dependency on terminal scraping where possible
+- Add notifications for account readiness changes
+- Support continuous daemon-style monitoring
+- Expand cloud-provider abstractions
+
+## Contributing
+
+Contributions are welcome. Please keep changes focused, documented, and covered by tests where appropriate.
+
+## License
+
+MIT
+```

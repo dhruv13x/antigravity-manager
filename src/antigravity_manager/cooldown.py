@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from .config import ACTIVE_ACCOUNT_PATH, DEFAULT_DECISION_MODEL
+from .config import DEFAULT_DECISION_MODEL
 from .list_backups import BackupEntry, parse_dt
 from .registry import load_registry
+from .utils import read_active_email
 
 
 @dataclass(frozen=True)
@@ -51,17 +52,6 @@ def format_remaining(seconds: int) -> str:
 def _models_from_status(status: dict[str, Any]) -> list[dict[str, Any]]:
     models = status.get("models", [])
     return models if isinstance(models, list) else []
-
-
-def read_active_email() -> str | None:
-    if not ACTIVE_ACCOUNT_PATH.exists():
-        return None
-    try:
-        data = json.loads(ACTIVE_ACCOUNT_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    email = data.get("email") if isinstance(data, dict) else None
-    return str(email) if email else None
 
 
 def evaluate_model(model: dict[str, Any], *, now: datetime) -> ModelCooldown:
@@ -272,6 +262,46 @@ def format_age(checked_at: datetime | None, *, now: datetime | None = None) -> s
     return f"{days}d ago"
 
 
+def group_models(models: tuple[ModelCooldown, ...]) -> list[ModelCooldown]:
+    """Groups models that share identical quota and refresh times to reduce clutter."""
+    if not models:
+        return []
+
+    # Map state key to list of models
+    key_map: dict[tuple[int | None, int], list[ModelCooldown]] = {}
+    # Track order of first appearance
+    ordered_keys: list[tuple[int | None, int]] = []
+
+    for m in models:
+        key = (m.quota_percent_left, m.remaining_seconds)
+        if key not in key_map:
+            key_map[key] = []
+            ordered_keys.append(key)
+        key_map[key].append(m)
+
+    result: list[ModelCooldown] = []
+    for key in ordered_keys:
+        members = key_map[key]
+        if len(members) == 1:
+            result.append(members[0])
+            continue
+
+        # Pick a representative for the group
+        # Preference: (High) > (Thinking) > first one
+        rep = members[0]
+        highs = [m for m in members if "(high)" in m.name.lower()]
+        thinks = [m for m in members if "(thinking)" in m.name.lower()]
+
+        if highs:
+            rep = highs[0]
+        elif thinks:
+            rep = thinks[0]
+
+        result.append(rep)
+
+    return result
+
+
 def print_statuses_table(statuses: list[CooldownStatus]) -> None:
     from .ui import Panel, Table, console
 
@@ -293,7 +323,8 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
         else:
             status_text = "[bold bright_yellow]COOLDOWN[/]"
 
-        usage = "\n".join(format_model_usage(model) for model in status.models) or "unknown"
+        display_models = group_models(status.models)
+        usage = "\n".join(format_model_usage(model) for model in display_models) or "unknown"
         next_available = format_remaining(status.remaining_seconds)
         last_checked = format_age(status.last_checked_at)
         table.add_row(

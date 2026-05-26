@@ -5,7 +5,7 @@ from datetime import datetime
 from antigravity_manager.status import parse_live_status_text
 
 SAMPLE_USAGE = """
-drewpoul13x@gmail.com (Google AI Pro)
+user@example.com (Google AI Pro)
 
 Model Quota
 
@@ -27,7 +27,7 @@ def test_parse_live_status_text_extracts_models_and_refresh() -> None:
     now = datetime.fromisoformat("2026-05-22T21:06:01+05:30")
     status = parse_live_status_text(SAMPLE_USAGE, now=now)
 
-    assert status.email == "drewpoul13x@gmail.com"
+    assert status.email == "user@example.com"
     assert status.plan == "Google AI Pro"
     assert status.is_pro is True
     assert len(status.models) == 3
@@ -44,18 +44,18 @@ def test_parse_live_status_text_extracts_models_and_refresh() -> None:
 def test_parse_email_and_plan_without_parentheses() -> None:
     from antigravity_manager.status import parse_email_and_plan
 
-    text = "drewpoul13x@gmail.com\nGemini 3.5 Flash (High)"
+    text = "user@example.com\nGemini 3.5 Flash (High)"
     email, plan = parse_email_and_plan(text)
-    assert email == "drewpoul13x@gmail.com"
+    assert email == "user@example.com"
     assert plan == "Standard"
 
 
 def test_parse_email_and_plan_with_parentheses() -> None:
     from antigravity_manager.status import parse_email_and_plan
 
-    text = "drewpoul13x@gmail.com (Pro Plan)\nGemini 3.5 Flash (High)"
+    text = "user@example.com (Pro Plan)\nGemini 3.5 Flash (High)"
     email, plan = parse_email_and_plan(text)
-    assert email == "drewpoul13x@gmail.com"
+    assert email == "user@example.com"
     assert plan == "Pro Plan"
 
 

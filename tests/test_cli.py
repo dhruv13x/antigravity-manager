@@ -8,6 +8,7 @@ from antigravity_manager.cli import (
     build_parser,
     handle_status,
     handle_use,
+    save_status_metadata,
     status_metadata_timestamp,
 )
 from antigravity_manager.status import AntigravityStatusError, LiveStatus, ModelQuotaStatus
@@ -42,6 +43,10 @@ def test_cli_list_backups_defaults_to_latest_per_account() -> None:
     assert args.command == "list-backups"
     assert args.all is True
 
+    args = parser.parse_args(["list-backups", "--cloud", "--bucket-name", "b"])
+    assert args.cloud is True
+    assert args.bucket_name == "b"
+
 
 def test_cli_use_accepts_target() -> None:
     parser = build_parser()
@@ -53,6 +58,9 @@ def test_cli_use_accepts_target() -> None:
     args = parser.parse_args(["use", "person@example.com", "--no-status"])
     assert args.no_status_check is True
 
+    args = parser.parse_args(["use", "person@example.com", "--cloud", "--bucket-name", "b"])
+    assert args.cloud is True
+
 
 def test_cli_restore_accepts_target_and_auth_only_flag() -> None:
     parser = build_parser()
@@ -63,6 +71,9 @@ def test_cli_restore_accepts_target_and_auth_only_flag() -> None:
     assert args.full is None
     assert args.no_status_check is False
 
+    args = parser.parse_args(["restore", "backup.tar.gz", "--cloud", "--bucket-name", "b"])
+    assert args.cloud is True
+
 
 def test_cli_recommend_restore_flag() -> None:
     parser = build_parser()
@@ -70,6 +81,9 @@ def test_cli_recommend_restore_flag() -> None:
     assert args.command == "recommend"
     assert args.restore is True
     assert args.no_status_check is True
+
+    args = parser.parse_args(["recommend", "--cloud", "--bucket-name", "b"])
+    assert args.cloud is True
 
 
 def test_cli_short_yes_aliases() -> None:
@@ -184,6 +198,37 @@ def test_status_metadata_timestamp_prefers_gemini_flash_high() -> None:
         ),
     )
     assert status_metadata_timestamp(status) == refresh_at
+
+
+def test_save_status_metadata_writes_cloud_listable_event_and_latest(tmp_path: Any) -> None:
+    captured_at = datetime.fromisoformat("2026-05-26T10:00:00+05:30")
+    refresh_at = datetime.fromisoformat("2026-05-26T15:00:00+05:30")
+    status = LiveStatus(
+        email="person@example.com",
+        plan="Standard",
+        is_pro=False,
+        captured_at=captured_at,
+        models=(
+            ModelQuotaStatus(
+                model_name="Gemini 3.5 Flash (High)",
+                quota_percent_left=0,
+                refresh_in_text="Refreshes in 5h",
+                refresh_at=refresh_at,
+                is_available=False,
+            ),
+        ),
+    )
+
+    event_path = save_status_metadata(status, tmp_path)
+    latest_path = tmp_path / "status" / "latest" / "person@example.com.status.json"
+
+    assert event_path.exists()
+    assert latest_path.exists()
+    assert event_path.parent == tmp_path / "status" / "events"
+    assert "email_person@example.com" in event_path.name
+    assert "checked_2026-05-26T100000+0530" in event_path.name
+    assert "ready_2026-05-26T150000+0530" in event_path.name
+    assert "state_cooldown" in event_path.name
 
 
 def test_handle_status_marks_active_account(monkeypatch: Any, tmp_path: Any) -> None:

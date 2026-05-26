@@ -7,18 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .config import SAFETY_BACKUP_DIR
+from .config import ACTIVE_ACCOUNT_PATH, SAFETY_BACKUP_DIR
 from .ui import Confirm, console
-from .utils import safe_label
-
-
-def read_active_email(source_dir: Path) -> str | None:
-    try:
-        data = json.loads((source_dir / "google_accounts.json").read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    active = data.get("active")
-    return active.strip() if isinstance(active, str) and active.strip() else None
+from .utils import read_active_email, safe_label
 
 
 def _copy_snapshot_item(path: Path, snapshot_dir: Path, name: str) -> None:
@@ -71,6 +62,9 @@ def perform_purge(args: Any) -> bool:
         extra_paths.append(Path(args.gemini_config_dir).expanduser())
     if getattr(args, "session_dir", None):
         extra_paths.append(Path(args.session_dir).expanduser())
+    if ACTIVE_ACCOUNT_PATH.exists():
+        extra_paths.append(ACTIVE_ACCOUNT_PATH)
+
     targets = [source_dir]
     seen = {source_dir.resolve()}
     for path in extra_paths:

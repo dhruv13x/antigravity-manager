@@ -10,35 +10,16 @@ from pathlib import Path
 from typing import Any
 
 from .config import (
-    ACTIVE_ACCOUNT_PATH,
     ANTIGRAVITY_AUTH_FILES,
     SAFETY_BACKUP_DIR,
 )
 from .list_backups import list_backups, load_metadata_for_archive
 from .ui import RenderableType
-from .utils import safe_label
-
-
-def read_active_email(antigravity_home: Path) -> str | None:
-    try:
-        data = json.loads((antigravity_home / "google_accounts.json").read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    active = data.get("active")
-    return active.strip() if isinstance(active, str) and active.strip() else None
-
-
-def read_manager_active_email() -> str | None:
-    try:
-        data = json.loads(ACTIVE_ACCOUNT_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    email = data.get("email") if isinstance(data, dict) else None
-    return email.strip() if isinstance(email, str) and email.strip() else None
+from .utils import read_active_email, safe_label
 
 
 def resolve_current_email(antigravity_home: Path) -> str:
-    return read_active_email(antigravity_home) or read_manager_active_email() or "unknown"
+    return read_active_email(antigravity_home) or "unknown"
 
 
 def archive_directory(source_dir: Path, archive_path: Path, *, arcname: str | None = None) -> Path:

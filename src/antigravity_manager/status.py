@@ -21,6 +21,8 @@ REFRESH_RE = re.compile(
     re.IGNORECASE,
 )
 PROMPT_RE = re.compile(r"[›>]")
+LOGIN_PROMPT_RE = re.compile(r"Welcome to the Antigravity CLI\. You are currently not signed in\.", re.IGNORECASE)
+ONBOARDING_PROMPT_RE = re.compile(r"Welcome to Antigravity CLI!.*Choose your color scheme", re.IGNORECASE | re.DOTALL)
 USAGE_HEADER_RE = re.compile(r"Model Quota", re.IGNORECASE)
 MODEL_NAME_RE = re.compile(r"^(?![│└>])(?=.*\()(?=.*\))(?=.*[A-Za-z]).+$")
 TRUST_PROMPT_RE = re.compile(r"Do you trust the contents of this project\?", re.IGNORECASE)
@@ -80,21 +82,54 @@ def capture_pane(pane_id: str) -> str:
 def wait_for_prompt(pane_id: str, *, timeout_seconds: float) -> str:
     start = time.time()
     stable_reads = 0
+    login_reads = 0
+    onboarding_reads = 0
+
     with console.status("[cyan]Waiting for Antigravity startup...[/cyan]", spinner="dots"):
         while True:
             output = capture_pane(pane_id)
 
-            # Handle directory trust prompt if it appears
+            # 1. Handle directory trust prompt (immediate action)
             if TRUST_PROMPT_RE.search(output):
                 run_command(["tmux", "send-keys", "-t", pane_id, "Enter"], check=False)
-                time.sleep(1)  # Give it a moment to process trust
+                time.sleep(1)
                 continue
 
+            # 2. Check for successful startup (Prompt + Account)
             has_prompt = PROMPT_RE.search(output) is not None
             has_account = EMAIL_AND_PLAN_RE.search(output) is not None
-            stable_reads = stable_reads + 1 if has_prompt and has_account else 0
-            if stable_reads >= 3:
-                return output
+
+            if has_prompt and has_account:
+                stable_reads += 1
+                if stable_reads >= 3:
+                    return output
+            else:
+                stable_reads = 0
+
+                # 3. Check for Login Required state (Require stability to allow slow startup)
+                if LOGIN_PROMPT_RE.search(output):
+                    login_reads += 1
+                    if login_reads >= 5:  # Seen for ~2.5 seconds
+                        raise AntigravityStatusError(
+                            "Antigravity CLI requires login.\n"
+                            "Please run 'agy' manually to log in, or use "
+                            "'[bold cyan]agm restore <email>[/]' to restore an existing account."
+                        )
+                else:
+                    login_reads = 0
+
+                # 4. Check for First-Time Setup (Onboarding) state (Require stability)
+                if ONBOARDING_PROMPT_RE.search(output):
+                    onboarding_reads += 1
+                    if onboarding_reads >= 5:  # Seen for ~2.5 seconds
+                        raise AntigravityStatusError(
+                            "Antigravity CLI is in first-time setup mode.\n"
+                            "Please complete the onboarding by running 'agy' manually, "
+                            "or use '[bold cyan]agm restore <email>[/]' to restore your account."
+                        )
+                else:
+                    onboarding_reads = 0
+
             if time.time() - start > timeout_seconds:
                 raise AntigravityStatusError(
                     "Timed out waiting for fully loaded Antigravity startup."

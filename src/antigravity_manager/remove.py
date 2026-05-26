@@ -25,13 +25,23 @@ def perform_remove(args: Any) -> dict[str, Any]:
     # 1. Identify local files
     local_files = []
     if backup_dir.exists():
-        for p in backup_dir.glob("*"):
+        for p in backup_dir.rglob("*"):
+            if not p.is_file() and not p.is_symlink():
+                continue
             is_match = f"-{email}-" in p.name or p.name.startswith(f"{email}-latest-")
-            if is_match and (
+            status_match = (
+                "status" in p.parts
+                and (
+                    f"email_{email}" in p.name
+                    or p.name == f"{email}.status.json"
+                )
+            )
+            is_backup_file = is_match and (
                 p.name.endswith(".tar.gz")
                 or p.name.endswith(".tar.gz.gpg")
                 or p.name.endswith(".metadata.json")
-            ):
+            )
+            if is_backup_file or status_match:
                 local_files.append(p)
 
     safety_files = []
@@ -102,10 +112,15 @@ def remove_result_to_text(results: dict[str, Any], email: str, dry_run: bool) ->
         for path in results["safety_backups_removed"]:
             tree.add(f"[bold]safety backup[/]: {path}")
 
+    if results.get("cloud_files_removed"):
+        for path in results["cloud_files_removed"]:
+            tree.add(f"[bold]cloud file[/]: {path}")
+
     if (
         not results.get("local_files_removed")
         and not results.get("local_registry_removed")
         and not results.get("safety_backups_removed")
+        and not results.get("cloud_files_removed")
     ):
         tree.add(f"[yellow]No removal actions taken for {email}.[/]")
 

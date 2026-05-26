@@ -49,5 +49,5 @@ def test_find_decision_model():
 
 
 def test_read_active_email(monkeypatch, tmp_path):
-    monkeypatch.setattr("antigravity_manager.cooldown.ACTIVE_ACCOUNT_PATH", tmp_path / "active.json")
+    monkeypatch.setattr("antigravity_manager.config.ACTIVE_ACCOUNT_PATH", tmp_path / "active.json")
     assert read_active_email() is None
