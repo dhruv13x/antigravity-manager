@@ -4,6 +4,7 @@ from antigravity_manager.cooldown import (
     ModelCooldown,
     evaluate_model,
     find_decision_model,
+    format_age,
     format_remaining,
     read_active_email,
 )
@@ -14,6 +15,15 @@ def test_format_remaining():
     assert format_remaining(60) == "1m"
     assert format_remaining(3660) == "1h 1m"
     assert format_remaining(90060) == "1d 1h 1m"
+
+
+def test_format_age():
+    now = datetime(2026, 5, 26, 14, 30, 0)
+    assert format_age(None, now=now) == "-"
+    assert format_age(now - timedelta(seconds=5), now=now) == "5s ago"
+    assert format_age(now - timedelta(minutes=5), now=now) == "5m ago"
+    assert format_age(now - timedelta(hours=2), now=now) == "2h ago"
+    assert format_age(now - timedelta(days=3), now=now) == "3d ago"
 
 
 def test_evaluate_model():
@@ -38,5 +48,6 @@ def test_find_decision_model():
     assert find_decision_model((m1, m2), "gemini 3.5 flash") == m2
 
 
-def test_read_active_email():
+def test_read_active_email(monkeypatch, tmp_path):
+    monkeypatch.setattr("antigravity_manager.cooldown.ACTIVE_ACCOUNT_PATH", tmp_path / "active.json")
     assert read_active_email() is None

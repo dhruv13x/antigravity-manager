@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from typing import Any
 
-from antigravity_manager.cli import build_parser
+from antigravity_manager.cli import (
+    build_parser,
+    handle_status,
+    handle_use,
+    status_metadata_timestamp,
+)
+from antigravity_manager.status import AntigravityStatusError, LiveStatus, ModelQuotaStatus
 
 
 def make_args(**kwargs: Any) -> argparse.Namespace:
@@ -41,6 +48,10 @@ def test_cli_use_accepts_target() -> None:
     args = parser.parse_args(["use", "person@example.com"])
     assert args.command == "use"
     assert args.target == "person@example.com"
+    assert args.no_status_check is False
+
+    args = parser.parse_args(["use", "person@example.com", "--no-status"])
+    assert args.no_status_check is True
 
 
 def test_cli_restore_accepts_target_and_auth_only_flag() -> None:
@@ -50,13 +61,15 @@ def test_cli_restore_accepts_target_and_auth_only_flag() -> None:
     assert args.target == "backup.tar.gz"
     assert args.auth_only is True
     assert args.full is None
+    assert args.no_status_check is False
 
 
 def test_cli_recommend_restore_flag() -> None:
     parser = build_parser()
-    args = parser.parse_args(["recommend", "--restore"])
+    args = parser.parse_args(["recommend", "--restore", "--no-status-check"])
     assert args.command == "recommend"
     assert args.restore is True
+    assert args.no_status_check is True
 
 
 def test_cli_short_yes_aliases() -> None:
@@ -97,3 +110,109 @@ def test_cli_version_shortcut() -> None:
     with pytest.raises(SystemExit) as excinfo:
         parser.parse_args(["-v"])
     assert excinfo.value.code == 0
+
+
+def test_handle_use_aborts_when_status_capture_fails(monkeypatch: Any, tmp_path: Any) -> None:
+    import pytest
+
+    args = make_args(
+        target="person@example.com",
+        backup_dir=str(tmp_path),
+        dest_dir=str(tmp_path / "dest"),
+        dry_run=False,
+        no_status_check=False,
+        tmux_session_name=None,
+        agy_command="agy",
+        tmux_cols=140,
+        tmux_rows=45,
+        startup_timeout_seconds=30.0,
+        usage_timeout_seconds=30.0,
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.capture_tmux_status_text",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("broken")),
+    )
+    called = False
+
+    def fake_restore(_: Any) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("antigravity_manager.cli.perform_restore", fake_restore)
+
+    with pytest.raises(AntigravityStatusError):
+        handle_use(args)
+    assert called is False
+
+
+def test_handle_use_no_status_check_skips_capture(monkeypatch: Any, tmp_path: Any) -> None:
+    args = make_args(
+        target="person@example.com",
+        backup_dir=str(tmp_path),
+        dest_dir=str(tmp_path / "dest"),
+        dry_run=False,
+        no_status_check=True,
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.capture_tmux_status_text",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("should not run")),
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.perform_restore",
+        lambda _: (tmp_path / "a.tar.gz", {"email": "person@example.com"}, [], None),
+    )
+    monkeypatch.setattr("antigravity_manager.cli.save_active_account", lambda *a, **kw: None)
+    handle_use(args)
+
+
+def test_status_metadata_timestamp_prefers_gemini_flash_high() -> None:
+    captured_at = datetime.fromisoformat("2026-05-26T10:00:00+05:30")
+    refresh_at = datetime.fromisoformat("2026-05-26T15:00:00+05:30")
+    status = LiveStatus(
+        email="person@example.com",
+        plan="Standard",
+        is_pro=False,
+        captured_at=captured_at,
+        models=(
+            ModelQuotaStatus(
+                model_name="Gemini 3.5 Flash (High)",
+                quota_percent_left=0,
+                refresh_in_text="Refreshes in 5h",
+                refresh_at=refresh_at,
+                is_available=False,
+            ),
+        ),
+    )
+    assert status_metadata_timestamp(status) == refresh_at
+
+
+def test_handle_status_marks_active_account(monkeypatch: Any, tmp_path: Any) -> None:
+    called: dict[str, str] = {}
+    monkeypatch.setattr(
+        "antigravity_manager.cli.capture_tmux_status_text",
+        lambda **kwargs: "person@example.com (Standard)\nModel Quota\n",
+    )
+    monkeypatch.setattr("antigravity_manager.cli.update_registry_from_status", lambda status: None)
+    monkeypatch.setattr(
+        "antigravity_manager.cli.save_status_metadata",
+        lambda status, backup_dir: tmp_path / "status.metadata.json",
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.save_active_account",
+        lambda email: called.setdefault("email", email),
+    )
+    handle_status(
+        make_args(
+            input_file=None,
+            backup_dir=str(tmp_path),
+            no_save=False,
+            json=True,
+            tmux_session_name=None,
+            agy_command="agy",
+            tmux_cols=140,
+            tmux_rows=45,
+            startup_timeout_seconds=30.0,
+            usage_timeout_seconds=30.0,
+        )
+    )
+    assert called["email"] == "person@example.com"

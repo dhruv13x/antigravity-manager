@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from .config import DEFAULT_DECISION_MODEL
+from .config import ACTIVE_ACCOUNT_PATH, DEFAULT_DECISION_MODEL
 from .list_backups import BackupEntry, parse_dt
 from .registry import load_registry
 
@@ -31,6 +32,7 @@ class CooldownStatus:
     decision_model: str
     decision_model_status: ModelCooldown | None
     models: tuple[ModelCooldown, ...]
+    last_checked_at: datetime | None = None
 
 
 def format_remaining(seconds: int) -> str:
@@ -52,7 +54,14 @@ def _models_from_status(status: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def read_active_email() -> str | None:
-    return None
+    if not ACTIVE_ACCOUNT_PATH.exists():
+        return None
+    try:
+        data = json.loads(ACTIVE_ACCOUNT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    email = data.get("email") if isinstance(data, dict) else None
+    return str(email) if email else None
 
 
 def evaluate_model(model: dict[str, Any], *, now: datetime) -> ModelCooldown:
@@ -92,6 +101,9 @@ def evaluate_metadata(
 ) -> CooldownStatus:
     current = now if now is not None else datetime.now().astimezone()
     status = metadata.get("status", {}) if isinstance(metadata.get("status"), dict) else {}
+    last_checked_at = parse_dt(str(metadata.get("captured_at", ""))) or parse_dt(
+        str(metadata.get("created_at", ""))
+    )
     model_statuses = tuple(
         evaluate_model(model, now=current) for model in _models_from_status(status)
     )
@@ -134,6 +146,7 @@ def evaluate_metadata(
         decision_model=decision_model,
         decision_model_status=decision_model_status,
         models=model_statuses,
+        last_checked_at=last_checked_at,
     )
 
 
@@ -168,25 +181,56 @@ def evaluate_entries(
 
 
 def format_model_usage(model: ModelCooldown) -> str:
-    quota = f"{model.quota_percent_left}%" if model.quota_percent_left is not None else "unknown"
-    if model.is_available:
-        state = "Ready"
+    # Get color and formatted quota
+    quota_val = model.quota_percent_left
+    quota_str = f"{quota_val}%" if quota_val is not None else "unknown"
+    
+    # Determine color
+    if quota_val is None:
+        color = "dim"
+    elif quota_val >= 75:
+        color = "spring_green3"
+    elif quota_val >= 50:
+        color = "yellow3"
+    elif quota_val >= 25:
+        color = "dark_orange"
     else:
-        state = compact_remaining(model.remaining_seconds)
-    return f"{compact_model_name(model.name)}  {quota}  {color_for_model(model, state)}"
+        color = "red3"
+    
+    # Format components
+    # model name: dim white, fixed width for alignment if possible, here using string padding
+    name_str = f"[dim white]{compact_model_name(model.name):<14}[/]"
+    # quota: fixed width (6), right aligned
+    quota_str = f"[{color}]{quota_str:>{4}}[/]"
+    
+    # State/Refresh
+    if model.is_available:
+        rem_sec = 0
+        if model.refresh_at:
+            tz = model.refresh_at.tzinfo
+            now = datetime.now(tz) if tz else datetime.now().astimezone()
+            rem_sec = max(0, int((model.refresh_at - now).total_seconds()))
+        if rem_sec > 0:
+            state = f"[dim]Ready ({compact_remaining(rem_sec)})[/]"
+        else:
+            state = "[success]Ready[/]"
+    else:
+        state = f"[dim]{compact_remaining(model.remaining_seconds)}[/]"
+        
+    return f"{name_str} {quota_str} {state}"
 
 
 def color_for_model(model: ModelCooldown, text: str) -> str:
     percent = model.quota_percent_left
     if percent is None:
         return f"[dim]{text}[/]"
+    if percent >= 75:
+        return f"[spring_green3]{text}[/]"
     if percent >= 50:
-        return f"[green]{text}[/]"
-    if percent >= 20:
-        return f"[yellow]{text}[/]"
-    if percent > 0:
+        return f"[yellow3]{text}[/]"
+    if percent >= 25:
         return f"[dark_orange]{text}[/]"
-    return f"[red]{text}[/]"
+    return f"[red3]{text}[/]"
 
 
 def compact_model_name(name: str) -> str:
@@ -211,6 +255,23 @@ def compact_remaining(seconds: int) -> str:
     return format_remaining(seconds).replace(" ", "")
 
 
+def format_age(checked_at: datetime | None, *, now: datetime | None = None) -> str:
+    if checked_at is None:
+        return "-"
+    current = now if now is not None else datetime.now(checked_at.tzinfo).astimezone()
+    seconds = max(0, int((current - checked_at).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s ago"
+    minutes, _ = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours, _ = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h ago"
+    days, _ = divmod(hours, 24)
+    return f"{days}d ago"
+
+
 def print_statuses_table(statuses: list[CooldownStatus]) -> None:
     from .ui import Panel, Table, console
 
@@ -220,6 +281,7 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
     table.add_column("Status", justify="center")
     table.add_column("Usage")
     table.add_column("Next Reset", justify="right", style="dim")
+    table.add_column("Last Checked", justify="right", style="dim")
 
     for status in statuses:
         if status.email == "unknown":
@@ -233,11 +295,13 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
 
         usage = "\n".join(format_model_usage(model) for model in status.models) or "unknown"
         next_available = format_remaining(status.remaining_seconds)
+        last_checked = format_age(status.last_checked_at)
         table.add_row(
             status.email,
             status_text,
             usage,
             next_available,
+            last_checked,
         )
     console.print(
         Panel(

@@ -24,7 +24,8 @@ def test_perform_purge(tmp_path, monkeypatch):
     assert perform_purge(args) is True
     assert not d.exists()
     assert any(
-        path.name.endswith("-unknown-pre-purge-antigravity") for path in safety_dir.iterdir()
+        path.name.endswith("-unknown-pre-purge-antigravity.tar.gz")
+        for path in safety_dir.iterdir()
     )
 
 

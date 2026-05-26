@@ -391,8 +391,9 @@ def parse_model_blocks(
         if i + 2 < len(lines):
             candidate = lines[i + 2].strip()
 
-            if candidate.startswith("Refreshes in"):
-                refresh_text = candidate
+            if "Refreshes in" in candidate:
+                idx = candidate.index("Refreshes in")
+                refresh_text = candidate[idx:]
 
         models.append(
             ModelQuotaStatus(
@@ -403,7 +404,7 @@ def parse_model_blocks(
                     refresh_text,
                     now=now,
                 ),
-                is_available=quota_percent > 0,
+                is_available=quota_percent > 0 and refresh_text is None,
             )
         )
 

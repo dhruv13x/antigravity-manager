@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tarfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,13 @@ def _copy_snapshot_item(path: Path, snapshot_dir: Path, name: str) -> None:
         shutil.copy2(path, target)
 
 
+def archive_directory(source_dir: Path, archive_path: Path) -> Path:
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(source_dir, arcname=source_dir.name, recursive=True)
+    return archive_path
+
+
 def safety_snapshot(
     source_dir: Path, *, dry_run: bool, extra_paths: list[Path] | None = None
 ) -> Path | None:
@@ -44,13 +52,16 @@ def safety_snapshot(
     email = read_active_email(source_dir) or "unknown"
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     snapshot_dir = SAFETY_BACKUP_DIR / f"{timestamp}-{safe_label(email)}-pre-purge-antigravity"
+    snapshot_archive = snapshot_dir.with_name(f"{snapshot_dir.name}.tar.gz")
     snapshot_dir.mkdir(parents=True, exist_ok=False)
     if source_dir.exists() or source_dir.is_symlink():
         _copy_snapshot_item(source_dir, snapshot_dir, "antigravity-cli")
     for path in extra_paths or []:
         if path.exists():
             _copy_snapshot_item(path, snapshot_dir, safe_label(path.name))
-    return snapshot_dir
+    archive_directory(snapshot_dir, snapshot_archive)
+    shutil.rmtree(snapshot_dir)
+    return snapshot_archive
 
 
 def perform_purge(args: Any) -> bool:

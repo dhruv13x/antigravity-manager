@@ -4,11 +4,13 @@ import argparse
 import json
 import sys
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
 from . import __version__
 from .backup import backup_result_to_text, perform_backup
 from .config import (
+    ACTIVE_ACCOUNT_PATH,
     ANTIGRAVITY_HOME,
     ANTIGRAVITY_SESSION_DIR,
     DEFAULT_BACKUP_DIR,
@@ -28,6 +30,7 @@ from .registry import update_registry_from_status
 from .remove import perform_remove, remove_result_to_text
 from .restore import perform_restore, restore_result_to_text
 from .status import (
+    AntigravityStatusError,
     LiveStatus,
     capture_tmux_status_text,
     live_status_to_text,
@@ -57,12 +60,71 @@ def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
         "backup_mode": "status-only",
         "status": status_to_dict(status),
     }
-    metadata_path = backup_dir / build_archive_name(status.captured_at, status.email).replace(
+    metadata_path = backup_dir / build_archive_name(status_metadata_timestamp(status), status.email).replace(
         ".tar.gz", ".status.metadata.json"
     )
     backup_dir.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
     return metadata_path
+
+
+def status_metadata_timestamp(status: LiveStatus) -> datetime:
+    for model in status.models:
+        model_name = model.model_name.lower()
+        if (
+            "gemini 3.5 flash" in model_name
+            and "(high)" in model_name
+            and model.refresh_at is not None
+        ):
+            return model.refresh_at
+    return status.captured_at
+
+
+def save_active_account(email: str, *, dry_run: bool = False) -> None:
+    if dry_run:
+        return
+    ACTIVE_ACCOUNT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ACTIVE_ACCOUNT_PATH.write_text(
+        json.dumps(
+            {"schema_version": 1, "email": email, "updated_at": datetime.now().astimezone().isoformat()},
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def add_status_skip_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--no-status-check",
+        "--no-status",
+        action="store_true",
+        dest="no_status_check",
+        help="Skip live status capture before switching accounts.",
+    )
+
+
+def capture_and_save_current_status(args: argparse.Namespace) -> LiveStatus | None:
+    if getattr(args, "dry_run", False) or getattr(args, "no_status_check", False):
+        return None
+    try:
+        text = capture_tmux_status_text(
+            session_name=getattr(args, "tmux_session_name", None),
+            agy_command=getattr(args, "agy_command", "agy"),
+            cols=getattr(args, "tmux_cols", 140),
+            rows=getattr(args, "tmux_rows", 45),
+            startup_timeout_seconds=getattr(args, "startup_timeout_seconds", 30.0),
+            usage_timeout_seconds=getattr(args, "usage_timeout_seconds", 30.0),
+        )
+        status = parse_live_status_text(text)
+    except Exception as exc:
+        raise AntigravityStatusError(
+            "Current account status could not be captured. Switch aborted. "
+            "Use --no-status-check only for first setup or corrupt current credentials."
+        ) from exc
+    update_registry_from_status(status)
+    save_status_metadata(status, Path(args.backup_dir).expanduser())
+    return status
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -177,6 +239,8 @@ def build_parser() -> argparse.ArgumentParser:
     restore_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be restored."
     )
+    add_status_skip_args(restore_parser)
+    add_tmux_args(restore_parser)
 
     cooldown_parser = subparsers.add_parser(
         "cooldown", help="Show account/model availability from status registry and backups."
@@ -242,6 +306,8 @@ def build_parser() -> argparse.ArgumentParser:
     recommend_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be restored with --use."
     )
+    add_status_skip_args(recommend_parser)
+    add_tmux_args(recommend_parser)
 
     use_parser = subparsers.add_parser("use", help="Auth-only restore for an account or archive.")
     use_parser.add_argument("target", help="Account email, archive filename, or archive path.")
@@ -259,6 +325,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     use_parser.add_argument("--dry-run", action="store_true", help="Show what would be restored.")
+    add_status_skip_args(use_parser)
+    add_tmux_args(use_parser)
 
     doctor_parser = subparsers.add_parser(
         "doctor", help="Check local Antigravity Manager prerequisites."
@@ -395,6 +463,7 @@ def handle_status(args: argparse.Namespace) -> None:
     if not getattr(args, "no_save", False):
         update_registry_from_status(status)
         save_status_metadata(status, Path(args.backup_dir).expanduser())
+        save_active_account(status.email)
     if args.json:
         console.print(json.dumps(status_to_dict(status), indent=2), markup=False)
     else:
@@ -413,7 +482,9 @@ def handle_restore(args: argparse.Namespace) -> None:
         raise ValueError("Use either --auth-only or --full, not both.")
     if getattr(args, "full", None) is None:
         args.full = not getattr(args, "auth_only", False)
+    capture_and_save_current_status(args)
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
+    save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
     console.print(
         restore_result_to_text(
             archive_path,
@@ -458,7 +529,11 @@ def handle_list_backups(args: argparse.Namespace) -> None:
 def handle_recommend(args: argparse.Namespace) -> None:
     if args.use and args.restore:
         raise ValueError("Use either --use or --restore, not both.")
-    entries = list_backups(Path(args.backup_dir).expanduser(), latest_per_email=True)
+    backup_dir = Path(args.backup_dir).expanduser()
+    entries = [
+        *list_backups(backup_dir, latest_per_email=True),
+        *list_status_metadata(backup_dir, latest_per_email=True),
+    ]
     statuses = evaluate_entries(entries, decision_model=args.decision_model)
     if not statuses:
         raise FileNotFoundError("No account status or backup metadata found.")
@@ -504,7 +579,9 @@ def handle_use(args: argparse.Namespace) -> None:
     args.force = False
     args.from_archive = None
     args.email = None
+    capture_and_save_current_status(args)
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
+    save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
     console.print(
         restore_result_to_text(
             archive_path,

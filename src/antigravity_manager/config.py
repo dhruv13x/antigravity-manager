@@ -11,6 +11,7 @@ def _home_from_env(name: str, fallback: str) -> Path:
 AGM_HOME = _home_from_env("AGM_HOME", "~/.antigravity-manager")
 DEFAULT_BACKUP_DIR = AGM_HOME / "backups"
 COOLDOWN_REGISTRY_PATH = AGM_HOME / "cooldown.json"
+ACTIVE_ACCOUNT_PATH = AGM_HOME / "active.json"
 SAFETY_BACKUP_DIR = AGM_HOME / "safety_backups"
 
 GEMINI_HOME = _home_from_env("GEMINI_HOME", "~/.gemini")

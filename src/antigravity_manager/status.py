@@ -220,15 +220,16 @@ def parse_model_blocks(text: str, *, now: datetime) -> tuple[ModelQuotaStatus, .
         refresh_text = None
         if i + 2 < len(lines):
             candidate = lines[i + 2].strip()
-            if candidate.startswith("Refreshes in"):
-                refresh_text = candidate
+            if "Refreshes in" in candidate:
+                idx = candidate.index("Refreshes in")
+                refresh_text = candidate[idx:]
         models.append(
             ModelQuotaStatus(
                 model_name=line,
                 quota_percent_left=quota_percent,
                 refresh_in_text=refresh_text,
                 refresh_at=parse_refresh_at(refresh_text, now=now),
-                is_available=quota_percent > 0,
+                is_available=quota_percent > 0 and refresh_text is None,
             )
         )
         i += 3
@@ -260,8 +261,8 @@ def live_status_to_text(status: LiveStatus) -> RenderableType:
     header.add_row("Captured At:", status.captured_at.strftime("%Y-%m-%d %H:%M:%S %Z"))
 
     model_table = Table(show_header=True, header_style="bold bright_magenta", box=None)
-    model_table.add_column("Model", style="bold bright_cyan")
-    model_table.add_column("Quota", justify="right")
+    model_table.add_column("Model", style="dim white")
+    model_table.add_column("Quota", justify="right", width=6)
     model_table.add_column("State", justify="center")
     model_table.add_column("Refresh", justify="right", style="dim")
 
@@ -269,19 +270,21 @@ def live_status_to_text(status: LiveStatus) -> RenderableType:
         quota_text = (
             f"{model.quota_percent_left}%" if model.quota_percent_left is not None else "unknown"
         )
-        state_text = "[success]Ready[/]" if model.is_available else "[danger]Cooldown[/]"
+        state_text = "[success]Ready[/]" if model.is_available else "[yellow]Cooldown[/]"
 
         if model.quota_percent_left is not None:
-            if model.quota_percent_left >= 50:
-                quota_text = f"[success]{quota_text}[/]"
-            elif model.quota_percent_left >= 20:
-                quota_text = f"[warning]{quota_text}[/]"
-            elif model.quota_percent_left > 0:
-                quota_text = f"[yellow]{quota_text}[/]"
+            if model.quota_percent_left >= 75:
+                quota_text = f"[spring_green3]{quota_text}[/]"
+            elif model.quota_percent_left >= 50:
+                quota_text = f"[yellow3]{quota_text}[/]"
+            elif model.quota_percent_left >= 25:
+                quota_text = f"[dark_orange]{quota_text}[/]"
             else:
-                quota_text = f"[danger]{quota_text}[/]"
+                quota_text = f"[red3]{quota_text}[/]"
 
         refresh_text = model.refresh_in_text or "available now"
+        # Style refresh text as dim to match other dim elements for consistency
+        refresh_text = f"[dim]{refresh_text}[/]"
 
         model_table.add_row(model.model_name, quota_text, state_text, refresh_text)
 

@@ -168,6 +168,7 @@ def test_print_statuses_table(capsys, monkeypatch):
 
     print_statuses_table([s1, s2, s3, s4])
     out = capsys.readouterr().out
+    assert "Last Checked" in out
     assert "ACTIVE" in out
     assert "COOLDOWN" in out
     assert "READY" in out

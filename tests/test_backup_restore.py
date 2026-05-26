@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from antigravity_manager.backup import perform_backup, resolve_backup_anchor
-from antigravity_manager.restore import perform_restore, resolve_archive_path, safe_extract
+from antigravity_manager.restore import (
+    perform_restore,
+    resolve_archive_path,
+    restore_full,
+    safe_extract,
+    snapshot_current_state,
+)
 from antigravity_manager.status import LiveStatus, ModelQuotaStatus
 
 
@@ -109,11 +115,14 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any
         == "dest-root@example.com"
     )
     assert any(
-        path.name.endswith("-person@example.com-pre-restore-antigravity")
-        for path in safety_dir.glob("*person@example.com-pre-restore-antigravity")
+        path.name.endswith("-person@example.com-pre-restore-antigravity.tar.gz")
+        for path in safety_dir.glob("*person@example.com-pre-restore-antigravity.tar.gz")
     )
-    safety_snapshot = next(safety_dir.glob("*person@example.com-pre-restore-antigravity"))
-    assert not (safety_snapshot / "gemini").exists()
+    safety_snapshot = next(safety_dir.glob("*person@example.com-pre-restore-antigravity.tar.gz"))
+    with tarfile.open(safety_snapshot, "r:gz") as tar:
+        names = set(tar.getnames())
+    assert not any("/gemini/" in name or name.endswith("/gemini") for name in names)
+    assert sorted(path.name for path in safety_dir.iterdir()) == [safety_snapshot.name]
 
 
 def test_backup_anchor_prefers_gemini_flash_reset() -> None:
@@ -281,3 +290,91 @@ def test_resolve_archive_path_accepts_positional_archive_filename(tmp_path: Path
     )
 
     assert resolved == archive.resolve()
+
+
+def test_snapshot_current_state_uses_manager_active_email(tmp_path: Path, monkeypatch: Any) -> None:
+    antigravity_home = tmp_path / "antigravity-cli"
+    antigravity_home.mkdir()
+    safety_dir = tmp_path / "safety"
+    active_path = tmp_path / "active.json"
+    active_path.write_text(json.dumps({"email": "active@example.com"}), encoding="utf-8")
+    monkeypatch.setattr("antigravity_manager.restore.SAFETY_BACKUP_DIR", safety_dir)
+    monkeypatch.setattr("antigravity_manager.restore.ACTIVE_ACCOUNT_PATH", active_path)
+
+    snapshot = snapshot_current_state(antigravity_home=antigravity_home, dry_run=False)
+
+    assert snapshot is not None
+    assert "active@example.com-pre-restore-antigravity.tar.gz" in snapshot.name
+
+
+def test_restore_full_does_not_create_safety_backup(tmp_path: Path, monkeypatch: Any) -> None:
+    extracted_dir = tmp_path / "extract"
+    src = extracted_dir / "antigravity-cli"
+    antigravity_home = tmp_path / "dest"
+    safety_dir = tmp_path / "safety"
+    src.mkdir(parents=True)
+    antigravity_home.mkdir()
+    (src / "settings.json").write_text("{}", encoding="utf-8")
+    (antigravity_home / "settings.json").write_text("old", encoding="utf-8")
+    monkeypatch.setattr("antigravity_manager.restore.SAFETY_BACKUP_DIR", safety_dir)
+
+    restore_full(
+        extracted_dir,
+        antigravity_home,
+        dry_run=False,
+        force=False,
+    )
+
+    assert not safety_dir.exists()
+    assert (antigravity_home / "settings.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_perform_full_restore_creates_one_safety_archive(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    backup_dir = tmp_path / "backups"
+    dest = tmp_path / "dest"
+    safety_dir = tmp_path / "safety"
+    backup_dir.mkdir()
+    dest.mkdir()
+    (dest / "google_accounts.json").write_text(
+        json.dumps({"active": "current@example.com"}), encoding="utf-8"
+    )
+
+    archive_path = backup_dir / "2026-05-26-145104-next@example.com-antigravity.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        settings = tmp_path / "settings.json"
+        settings.write_text("{}", encoding="utf-8")
+        tar.add(settings, arcname="antigravity-cli/settings.json")
+    archive_path.with_name(archive_path.name.replace(".tar.gz", ".metadata.json")).write_text(
+        json.dumps(
+            {
+                "product": "antigravity",
+                "email": "next@example.com",
+                "plan": "Standard",
+                "created_at": "2026-05-26T14:51:04+05:30",
+                "captured_at": "2026-05-26T14:51:04+05:30",
+                "next_available_at": "2026-05-26T14:51:04+05:30",
+                "backup_mode": "full",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("antigravity_manager.restore.SAFETY_BACKUP_DIR", safety_dir)
+
+    _, _, _, safety_path = perform_restore(
+        make_args(
+            target=archive_path.name,
+            from_archive=None,
+            email=None,
+            backup_dir=str(backup_dir),
+            dest_dir=str(dest),
+            full=True,
+            force=False,
+            dry_run=False,
+        )
+    )
+
+    assert safety_path is not None
+    assert sorted(path.name for path in safety_dir.iterdir()) == [safety_path.name]
+    assert safety_path.name.endswith("-current@example.com-pre-restore-antigravity.tar.gz")

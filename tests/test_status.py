@@ -16,6 +16,10 @@ Quota available
 Claude Sonnet 4.6 (Thinking)
 ░░░░░░░░░░░░░░░░░░░░ 0%
 Refreshes in 2h 5m
+
+Gemini 3.5 Flash (Medium)
+███████████ ░░░░░░░░░░░ ░░░░░░░░░░░ ░░░░░░░░░░░ ░░░░░░░░░░░ 20%
+20% remaining · Refreshes in 3h 22m
 """
 
 
@@ -26,11 +30,15 @@ def test_parse_live_status_text_extracts_models_and_refresh() -> None:
     assert status.email == "drewpoul13x@gmail.com"
     assert status.plan == "Google AI Pro"
     assert status.is_pro is True
-    assert len(status.models) == 2
+    assert len(status.models) == 3
     assert status.models[0].model_name == "Gemini 3.5 Flash (High)"
     assert status.models[0].is_available is True
     assert status.models[1].quota_percent_left == 0
     assert status.models[1].refresh_at == datetime.fromisoformat("2026-05-22T23:11:01+05:30")
+    assert status.models[2].model_name == "Gemini 3.5 Flash (Medium)"
+    assert status.models[2].quota_percent_left == 20
+    assert status.models[2].is_available is False
+    assert status.models[2].refresh_at == datetime.fromisoformat("2026-05-23T00:28:01+05:30")
 
 
 def test_parse_email_and_plan_without_parentheses() -> None:

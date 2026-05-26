@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import (
+    ACTIVE_ACCOUNT_PATH,
     ANTIGRAVITY_AUTH_FILES,
     SAFETY_BACKUP_DIR,
 )
@@ -25,6 +26,26 @@ def read_active_email(antigravity_home: Path) -> str | None:
         return None
     active = data.get("active")
     return active.strip() if isinstance(active, str) and active.strip() else None
+
+
+def read_manager_active_email() -> str | None:
+    try:
+        data = json.loads(ACTIVE_ACCOUNT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    email = data.get("email") if isinstance(data, dict) else None
+    return email.strip() if isinstance(email, str) and email.strip() else None
+
+
+def resolve_current_email(antigravity_home: Path) -> str:
+    return read_active_email(antigravity_home) or read_manager_active_email() or "unknown"
+
+
+def archive_directory(source_dir: Path, archive_path: Path, *, arcname: str | None = None) -> Path:
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(source_dir, arcname=arcname or source_dir.name, recursive=True)
+    return archive_path
 
 
 def latest_backup_archive(backup_dir: Path, *, email: str | None = None) -> Path:
@@ -147,7 +168,8 @@ def backup_existing_file(path: Path, *, label: str) -> Path | None:
     backup_name = f"{safe_label(label)}-{path.name}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     backup_path = SAFETY_BACKUP_DIR / backup_name
     if path.is_dir() and not path.is_symlink():
-        shutil.copytree(path, backup_path, symlinks=True)
+        backup_path = backup_path.with_suffix(f"{backup_path.suffix}.tar.gz")
+        archive_directory(path, backup_path, arcname=path.name)
     else:
         shutil.copy2(path, backup_path, follow_symlinks=False)
     return backup_path
@@ -159,7 +181,6 @@ def copy_member_file(src: Path, dest: Path, *, dry_run: bool) -> Path | None:
     if dry_run:
         return None
     dest.parent.mkdir(parents=True, exist_ok=True)
-    backup_existing_file(dest, label="auth")
     if src.is_dir() and not src.is_symlink():
         if dest.exists():
             shutil.rmtree(dest)
@@ -190,9 +211,10 @@ def snapshot_current_state(
     if not antigravity_home.exists():
         return None
 
-    email = read_active_email(antigravity_home) or "unknown"
+    email = resolve_current_email(antigravity_home)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     snapshot_dir = SAFETY_BACKUP_DIR / f"{timestamp}-{safe_label(email)}-pre-restore-antigravity"
+    snapshot_archive = snapshot_dir.with_name(f"{snapshot_dir.name}.tar.gz")
     snapshot_dir.mkdir(parents=True, exist_ok=False)
 
     if antigravity_home.exists():
@@ -203,32 +225,21 @@ def snapshot_current_state(
             ignore=shutil.ignore_patterns("log", "updater", "knowledge"),
         )
 
-    return snapshot_dir
+    archive_directory(snapshot_dir, snapshot_archive, arcname=snapshot_dir.name)
+    shutil.rmtree(snapshot_dir)
+    return snapshot_archive
 
 
-def restore_full(
-    extracted_dir: Path, antigravity_home: Path, *, dry_run: bool, force: bool
-) -> Path | None:
+def restore_full(extracted_dir: Path, antigravity_home: Path, *, dry_run: bool, force: bool) -> None:
     src = extracted_dir / "antigravity-cli"
     if not src.exists():
         raise ValueError("Archive does not contain antigravity-cli state.")
     if dry_run:
-        return None
+        return
     antigravity_home.parent.mkdir(parents=True, exist_ok=True)
-    safety_path = None
     if antigravity_home.exists():
-        if not force:
-            SAFETY_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-            safety_path = (
-                SAFETY_BACKUP_DIR
-                / f"antigravity-cli.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-            )
-            shutil.move(str(antigravity_home), str(safety_path))
-        else:
-            shutil.rmtree(antigravity_home)
+        shutil.rmtree(antigravity_home)
     shutil.copytree(src, antigravity_home, symlinks=True)
-    restore_auth_only(extracted_dir, antigravity_home, dry_run=False)
-    return safety_path
 
 
 def perform_restore(args: Any) -> tuple[Path, dict[str, Any], list[Path], Path | None]:
@@ -239,24 +250,26 @@ def perform_restore(args: Any) -> tuple[Path, dict[str, Any], list[Path], Path |
     with tempfile.TemporaryDirectory(prefix="agm-restore-") as temp_dir_str:
         extracted_dir = Path(temp_dir_str)
         safe_extract(archive_path, extracted_dir)
-        pre_restore_snapshot = snapshot_current_state(
-            antigravity_home=antigravity_home,
-            dry_run=getattr(args, "dry_run", False),
-        )
+        safety_path = None
+        if not (getattr(args, "full", False) and getattr(args, "force", False)):
+            safety_path = snapshot_current_state(
+                antigravity_home=antigravity_home,
+                dry_run=getattr(args, "dry_run", False),
+            )
         if getattr(args, "full", False):
-            safety_path = restore_full(
+            restore_full(
                 extracted_dir,
                 antigravity_home,
                 dry_run=getattr(args, "dry_run", False),
                 force=getattr(args, "force", False),
             )
-            return archive_path, metadata, [], safety_path or pre_restore_snapshot
+            return archive_path, metadata, [], safety_path
         restored = restore_auth_only(
             extracted_dir,
             antigravity_home,
             dry_run=getattr(args, "dry_run", False),
         )
-        return archive_path, metadata, restored, pre_restore_snapshot
+        return archive_path, metadata, restored, safety_path
 
 
 def restore_result_to_text(
