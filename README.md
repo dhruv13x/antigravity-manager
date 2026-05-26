@@ -1,4 +1,3 @@
-```markdown
 # 🌌 Antigravity Manager
 
 A stateful command-line tool for backup, restore, cooldown tracking, account rotation, cloud sync, and safety recovery for the Antigravity CLI.
@@ -329,4 +328,3 @@ Contributions are welcome. Please keep changes focused, documented, and covered 
 ## License
 
 MIT
-```
