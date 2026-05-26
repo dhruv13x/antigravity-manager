@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.0.0] - 2026-05-26
+### Other Changes
+- update
+
 ## [2.0.0] - 2026-05-25
 ### Documentation
 - update README.md to v3 gold standard (#11)
