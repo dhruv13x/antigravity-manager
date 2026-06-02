@@ -150,8 +150,10 @@ def test_cli_sync_auto(monkeypatch, tmp_path, capsys):
         pushed = True
         print("pushed!")
 
-    monkeypatch.setattr(antigravity_manager.cli, "pull_backup", fake_pull)
-    monkeypatch.setattr(antigravity_manager.cli, "push_backup", fake_push)
+    monkeypatch.setattr("antigravity_manager.sync._get_b2_bucket", lambda *a, **kw: "dummy_bucket")
+    monkeypatch.setattr("antigravity_manager.sync.deduplicate_cloud", lambda *a, **kw: None)
+    monkeypatch.setattr("antigravity_manager.sync.pull_backup", fake_pull)
+    monkeypatch.setattr("antigravity_manager.sync.push_backup", fake_push)
 
     main()
     captured = capsys.readouterr()

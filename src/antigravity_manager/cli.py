@@ -43,6 +43,7 @@ from .sync import (
     pull_backup,
     pull_cloud_index,
     push_backup,
+    sync_auto,
 )
 from .ui import banner, console, error_console, print_rich_help
 from .utils import build_archive_name, safe_label, read_active_email
@@ -887,9 +888,7 @@ def handle_sync(args: argparse.Namespace) -> None:
             dry_run=args.dry_run,
         )
     elif args.direction == "auto":
-        console.print("[cyan]Bidirectional sync starting...[/cyan]")
-        console.print("[cyan]Step 1: Pulling missing backups from cloud...[/cyan]")
-        pull_backup(
+        sync_auto(
             backup_dir=backup_dir,
             bucket_name=bucket_name,
             endpoint_url=endpoint_url,
@@ -897,16 +896,6 @@ def handle_sync(args: argparse.Namespace) -> None:
             secret_key=secret_key,
             dry_run=args.dry_run,
         )
-        console.print("[cyan]Step 2: Pushing missing local backups to cloud...[/cyan]")
-        push_backup(
-            backup_dir=backup_dir,
-            bucket_name=bucket_name,
-            endpoint_url=endpoint_url,
-            access_key=access_key,
-            secret_key=secret_key,
-            dry_run=args.dry_run,
-        )
-        console.print("[green]Bidirectional sync complete![/green]")
 
 
 def main() -> None:

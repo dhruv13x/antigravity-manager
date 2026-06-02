@@ -271,3 +271,153 @@ def verify_cloud_connectivity(
     except Exception as e:
         console_stderr.print(f"[bold red]Cloud verification failed for {bucket_name}: {e}[/]")
         return False
+
+
+def deduplicate_and_upgrade_local(backup_dir: Path, dry_run: bool = False) -> None:
+    if not backup_dir.exists():
+        return
+
+    import json
+    import shutil
+    from .list_backups import list_backups, metadata_path_for_archive
+    from .utils import safe_label
+
+    entries = list_backups(backup_dir, latest_per_email=False)
+    by_email: dict[str, list[Any]] = {}
+    for entry in entries:
+        by_email.setdefault(entry.email, []).append(entry)
+
+    for email, email_entries in by_email.items():
+        email_entries.sort(key=lambda e: e.captured_at or e.created_at, reverse=True)
+        
+        latest_entry = email_entries[0]
+        latest_name = latest_entry.archive_path.name
+        
+        is_encrypted = latest_name.endswith(".gpg")
+        suffix = ".tar.gz.gpg" if is_encrypted else ".tar.gz"
+        expected_latest_name = f"{safe_label(email)}-latest-antigravity{suffix}"
+        
+        if latest_name != expected_latest_name:
+            target_archive = backup_dir / expected_latest_name
+            target_metadata = backup_dir / expected_latest_name.replace(suffix, ".metadata.json")
+            
+            src_archive = latest_entry.archive_path
+            src_metadata = metadata_path_for_archive(src_archive)
+            
+            if dry_run:
+                console.print(f"[dry-run] Would promote local backup {src_archive.name} to {expected_latest_name}")
+            else:
+                try:
+                    console.print(f"[cyan]Promoting local backup {src_archive.name} to {expected_latest_name}...[/cyan]")
+                    if src_archive.exists():
+                        shutil.move(src_archive, target_archive)
+                    if src_metadata.exists():
+                        try:
+                            meta_data = json.loads(src_metadata.read_text(encoding="utf-8"))
+                            meta_data["archive_name"] = expected_latest_name
+                            meta_data["archive_path"] = str(target_archive)
+                            target_metadata.write_text(json.dumps(meta_data, indent=2, sort_keys=True), encoding="utf-8")
+                            src_metadata.unlink()
+                        except Exception:
+                            shutil.move(src_metadata, target_metadata)
+                except Exception as e:
+                    console_stderr.print(f"[bold red]Failed to promote backup for {email}: {e}[/]")
+            
+            duplicates = email_entries[1:]
+        else:
+            duplicates = email_entries[1:]
+
+        for dup in duplicates:
+            archive = dup.archive_path
+            metadata = metadata_path_for_archive(archive)
+            
+            if dry_run:
+                console.print(f"[dry-run] Would delete local legacy duplicate: {archive.name}")
+            else:
+                try:
+                    console.print(f"Deleting local legacy duplicate: {archive.name}...")
+                    if archive.exists() or archive.is_symlink():
+                        archive.unlink()
+                    if metadata.exists():
+                        metadata.unlink()
+                except Exception as e:
+                    console_stderr.print(f"[bold red]Failed to delete legacy duplicate {archive.name}: {e}[/]")
+
+
+def deduplicate_cloud(bucket: Any, dry_run: bool = False) -> None:
+    try:
+        remote_files = list(bucket.ls(recursive=True))
+    except Exception as e:
+        console_stderr.print(f"[bold red]Failed to list remote files for deduplication: {e}[/]")
+        return
+
+    for file_version, _ in remote_files:
+        name = file_version.file_name
+        is_backup_or_meta = (
+            name.endswith("-antigravity.tar.gz") or 
+            name.endswith("-antigravity.tar.gz.gpg") or
+            name.endswith("-antigravity.metadata.json")
+        )
+        is_latest = "-latest-antigravity." in name
+        
+        if is_backup_or_meta and not is_latest:
+            if dry_run:
+                console.print(f"[dry-run] Would delete cloud legacy duplicate: {name}")
+                continue
+            
+            file_id = getattr(file_version, "id_", None) or getattr(file_version, "file_id", None)
+            try:
+                if file_id:
+                    console.print(f"Deleting cloud legacy duplicate: {name}...")
+                    bucket.delete_file_version(file_id, name)
+                elif hasattr(bucket, "hide_file"):
+                    console.print(f"Hiding cloud legacy duplicate: {name}...")
+                    bucket.hide_file(name)
+            except Exception as e:
+                console_stderr.print(f"[bold red]Failed to delete cloud duplicate {name}: {e}[/]")
+
+
+def sync_auto(
+    backup_dir: Path,
+    bucket_name: str,
+    endpoint_url: str | None = None,
+    access_key: str | None = None,
+    secret_key: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    if not access_key or not secret_key:
+        console_stderr.print("[bold red]Missing B2 credentials (KEY_ID or APP_KEY).[/]")
+        return
+
+    console.print("[cyan]Step 1: Deduplicating and upgrading local backups to the 'latest' standard...[/cyan]")
+    deduplicate_and_upgrade_local(backup_dir, dry_run=dry_run)
+
+    try:
+        bucket = _get_b2_bucket(access_key, secret_key, bucket_name)
+    except Exception as e:
+        console_stderr.print(f"[bold red]Failed to connect to B2 bucket {bucket_name}: {e}[/]")
+        return
+
+    console.print("[cyan]Step 2: Cleaning cloud legacy duplicates from B2...[/cyan]")
+    deduplicate_cloud(bucket, dry_run=dry_run)
+
+    console.print("[cyan]Step 3: Pulling missing latest backups from cloud...[/cyan]")
+    pull_backup(
+        backup_dir=backup_dir,
+        bucket_name=bucket_name,
+        endpoint_url=endpoint_url,
+        access_key=access_key,
+        secret_key=secret_key,
+        dry_run=dry_run,
+    )
+
+    console.print("[cyan]Step 4: Pushing missing local latest backups to cloud...[/cyan]")
+    push_backup(
+        backup_dir=backup_dir,
+        bucket_name=bucket_name,
+        endpoint_url=endpoint_url,
+        access_key=access_key,
+        secret_key=secret_key,
+        dry_run=dry_run,
+    )
+    console.print("[green]Bidirectional sync and deduplication complete![/green]")
