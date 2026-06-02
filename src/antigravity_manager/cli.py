@@ -87,27 +87,7 @@ def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
     return latest_path
 
 
-def status_event_metadata_path(
-    backup_dir: Path,
-    *,
-    email: str,
-    checked_at: datetime,
-    ready_at: datetime,
-    state: str,
-) -> Path:
-    checked = checked_at.isoformat(timespec="seconds").replace(":", "")
-    ready = ready_at.isoformat(timespec="seconds").replace(":", "")
-    name = (
-        f"status__email_{safe_label(email)}"
-        f"__checked_{checked}"
-        f"__ready_{ready}"
-        f"__state_{safe_label(state)}.json"
-    )
-    return backup_dir / "status" / "events" / name
 
-
-def status_latest_metadata_path(backup_dir: Path, email: str) -> Path:
-    return backup_dir / "status" / "latest" / f"{safe_label(email)}.status.json"
 
 
 def status_state(status: LiveStatus) -> str:

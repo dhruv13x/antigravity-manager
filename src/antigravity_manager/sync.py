@@ -45,12 +45,15 @@ def push_backup(
         console_stderr.print(f"[bold red]Failed to list remote bucket {bucket_name}: {e}[/]")
         return
 
-    # Push backup archives/metadata and nested status index files.
+    # Push backup archives/metadata.
     backup_files = sorted(
         list(backup_dir.glob("*.tar.gz"))
         + list(backup_dir.glob("*.tar.gz.gpg"))
-        + list(backup_dir.glob("*.metadata.json"))
-        + list(backup_dir.glob("status/**/*.json"))
+        + [
+            p
+            for p in backup_dir.glob("*.metadata.json")
+            if not p.name.endswith(".status.metadata.json")
+        ]
     )
 
     for file_path in backup_files:
@@ -111,6 +114,10 @@ def pull_backup(
             object_name = file_version.file_name
             file_path = backup_dir / object_name
 
+            # Skip legacy status and status metadata files from cloud
+            if object_name.startswith("status/") or object_name.endswith(".status.metadata.json"):
+                continue
+
             if object_name in local_files:
                 console.print(f"Skipping {object_name}, already exists locally.")
                 continue
@@ -156,7 +163,10 @@ def pull_cloud_index(
     try:
         for file_version, _ in bucket.ls(recursive=True):
             object_name = file_version.file_name
-            is_index = object_name.endswith(".metadata.json") or object_name.startswith("status/")
+            # Skip legacy status and status metadata files from cloud
+            if object_name.startswith("status/") or object_name.endswith(".status.metadata.json"):
+                continue
+            is_index = object_name.endswith(".metadata.json")
             if not is_index or object_name in local_files:
                 continue
             file_path = backup_dir / object_name
@@ -282,6 +292,38 @@ def deduplicate_and_upgrade_local(backup_dir: Path, dry_run: bool = False) -> No
     from .list_backups import list_backups, metadata_path_for_archive
     from .utils import safe_label
 
+    # 1. Clean up local legacy status files and directories
+    legacy_patterns = [
+        "*.status.metadata.json",
+        "status/events/*.json",
+        "status/latest/*.status.json",
+    ]
+    for pattern in legacy_patterns:
+        for p in backup_dir.glob(pattern):
+            if p.is_file() or p.is_symlink():
+                if dry_run:
+                    console.print(f"[dry-run] Would delete local legacy status file: {p.relative_to(backup_dir)}")
+                else:
+                    try:
+                        console.print(f"Deleting local legacy status file: {p.relative_to(backup_dir)}...")
+                        p.unlink()
+                    except Exception as e:
+                        console_stderr.print(f"[bold red]Failed to delete local legacy status file {p}: {e}[/]")
+
+    # Remove empty status directories
+    status_dir = backup_dir / "status"
+    if status_dir.exists():
+        if dry_run:
+            console.print(f"[dry-run] Would delete local legacy status directory: {status_dir.relative_to(backup_dir)}")
+        else:
+            try:
+                import shutil
+                shutil.rmtree(status_dir, ignore_errors=True)
+                console.print("Cleaned up local legacy status directory.")
+            except Exception as e:
+                pass
+
+    # 2. Promote and deduplicate backups
     entries = list_backups(backup_dir, latest_per_email=False)
     by_email: dict[str, list[Any]] = {}
     for entry in entries:
@@ -360,7 +402,12 @@ def deduplicate_cloud(bucket: Any, dry_run: bool = False) -> None:
         )
         is_latest = "-latest-antigravity." in name
         
-        if is_backup_or_meta and not is_latest:
+        is_legacy_status = (
+            name.startswith("status/") or
+            name.endswith(".status.metadata.json")
+        )
+        
+        if (is_backup_or_meta and not is_latest) or is_legacy_status:
             if dry_run:
                 console.print(f"[dry-run] Would delete cloud legacy duplicate: {name}")
                 continue

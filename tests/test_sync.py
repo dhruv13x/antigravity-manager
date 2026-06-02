@@ -39,9 +39,8 @@ def test_push_backup(tmp_path, monkeypatch):
     bdir.mkdir()
     f = bdir / "test.tar.gz"
     f.write_bytes(b"123")
-    status_file = bdir / "status" / "events" / "status__email_user@example.com.json"
-    status_file.parent.mkdir(parents=True)
-    status_file.write_bytes(b"{}")
+    meta_file = bdir / "user@example.com-latest-antigravity.metadata.json"
+    meta_file.write_bytes(b"{}")
 
     bucket = DummyB2Bucket({"other.tar.gz": 100})
     monkeypatch.setattr("antigravity_manager.sync._get_b2_bucket", lambda *args, **kw: bucket)
@@ -51,7 +50,7 @@ def test_push_backup(tmp_path, monkeypatch):
     assert len(bucket.uploaded) == 2
     assert {item[1] for item in bucket.uploaded} == {
         "test.tar.gz",
-        "status/events/status__email_user@example.com.json",
+        "user@example.com-latest-antigravity.metadata.json",
     }
 
 def test_pull_backup(tmp_path, monkeypatch):
@@ -60,14 +59,14 @@ def test_pull_backup(tmp_path, monkeypatch):
     f = bdir / "test.tar.gz"
     f.write_bytes(b"123")
 
-    bucket = DummyB2Bucket({"test.tar.gz": 3, "status/events/new.json": 100})
+    bucket = DummyB2Bucket({"test.tar.gz": 3, "user@example.com-latest-antigravity.metadata.json": 100})
     monkeypatch.setattr("antigravity_manager.sync._get_b2_bucket", lambda *args, **kw: bucket)
 
     pull_backup(bdir, "mybucket", access_key="id", secret_key="key")
 
     assert len(bucket.downloaded) == 1
-    assert bucket.downloaded[0] == "status/events/new.json"
-    assert (bdir / "status" / "events" / "new.json").exists()
+    assert bucket.downloaded[0] == "user@example.com-latest-antigravity.metadata.json"
+    assert (bdir / "user@example.com-latest-antigravity.metadata.json").exists()
 
 
 def test_pull_cloud_index_skips_archives(tmp_path, monkeypatch):
@@ -78,17 +77,15 @@ def test_pull_cloud_index_skips_archives(tmp_path, monkeypatch):
         {
             "backup.tar.gz": 100,
             "backup.metadata.json": 10,
-            "status/events/account.json": 10,
         }
     )
     monkeypatch.setattr("antigravity_manager.sync._get_b2_bucket", lambda *args, **kw: bucket)
 
     pull_cloud_index(bdir, "mybucket", access_key="id", secret_key="key")
 
-    assert bucket.downloaded == ["backup.metadata.json", "status/events/account.json"]
+    assert bucket.downloaded == ["backup.metadata.json"]
     assert not (bdir / "backup.tar.gz").exists()
     assert (bdir / "backup.metadata.json").exists()
-    assert (bdir / "status" / "events" / "account.json").exists()
 
 
 def test_delete_cloud_account_objects(monkeypatch):
