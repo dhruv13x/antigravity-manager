@@ -12,4 +12,4 @@ def test_safe_label():
 
 def test_build_archive_name():
     dt = datetime(2024, 1, 1, 12, 0, 0)
-    assert build_archive_name(dt, "user") == "user-latest-antigravity.tar.gz"
+    assert build_archive_name(dt, "user") == "20240101_120000-user-antigravity.tar.gz"
