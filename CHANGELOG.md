@@ -1,5 +1,11 @@
 # Changelog
 
+## [8.0.0] - 2026-06-02
+### Features
+- add agm sync auto for bidirectional cloud synchronization
+### Bug Fixes
+- update sync auto unit test to mock dependencies inside sync module
+
 ## [7.0.0] - 2026-06-02
 ### Bug Fixes
 - pop record_type from consolidated metadata if backup exists to ensure correct listing
