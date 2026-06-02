@@ -127,3 +127,35 @@ def test_cli_sync_pull(monkeypatch, tmp_path, capsys):
     main()
     captured = capsys.readouterr()
     assert "pulled!" in captured.out
+
+
+def test_cli_sync_auto(monkeypatch, tmp_path, capsys):
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["agm", "sync", "auto", "--bucket-name", "b", "--dry-run"])
+    import antigravity_manager.cli
+
+    monkeypatch.setattr(
+        "antigravity_manager.cli.resolve_credentials",
+        lambda *a, **kw: ("key", "secret", "b", "url"),
+    )
+    pulled = False
+    pushed = False
+    def fake_pull(*a, **kw):
+        nonlocal pulled
+        pulled = True
+        print("pulled!")
+    def fake_push(*a, **kw):
+        nonlocal pushed
+        pushed = True
+        print("pushed!")
+
+    monkeypatch.setattr(antigravity_manager.cli, "pull_backup", fake_pull)
+    monkeypatch.setattr(antigravity_manager.cli, "push_backup", fake_push)
+
+    main()
+    captured = capsys.readouterr()
+    assert "pulled!" in captured.out
+    assert "pushed!" in captured.out
+    assert pulled is True
+    assert pushed is True

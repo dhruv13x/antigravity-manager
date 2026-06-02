@@ -517,7 +517,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sync_parser = subparsers.add_parser("sync", help="Sync backups with S3 bucket.")
-    sync_parser.add_argument("direction", choices=["push", "pull"], help="Direction to sync.")
+    sync_parser.add_argument("direction", choices=["push", "pull", "auto"], help="Direction to sync.")
     sync_parser.add_argument(
         "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Local backup directory."
     )
@@ -886,6 +886,27 @@ def handle_sync(args: argparse.Namespace) -> None:
             secret_key=secret_key,
             dry_run=args.dry_run,
         )
+    elif args.direction == "auto":
+        console.print("[cyan]Bidirectional sync starting...[/cyan]")
+        console.print("[cyan]Step 1: Pulling missing backups from cloud...[/cyan]")
+        pull_backup(
+            backup_dir=backup_dir,
+            bucket_name=bucket_name,
+            endpoint_url=endpoint_url,
+            access_key=access_key,
+            secret_key=secret_key,
+            dry_run=args.dry_run,
+        )
+        console.print("[cyan]Step 2: Pushing missing local backups to cloud...[/cyan]")
+        push_backup(
+            backup_dir=backup_dir,
+            bucket_name=bucket_name,
+            endpoint_url=endpoint_url,
+            access_key=access_key,
+            secret_key=secret_key,
+            dry_run=args.dry_run,
+        )
+        console.print("[green]Bidirectional sync complete![/green]")
 
 
 def main() -> None:
