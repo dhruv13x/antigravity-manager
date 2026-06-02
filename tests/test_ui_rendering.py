@@ -141,7 +141,7 @@ def test_print_entries_table(capsys):
     out = capsys.readouterr().out
     assert "Antigravity Backups" in out
 
-    entry1 = BackupEntry(Path("/a1"), "a@b.c", "Pro", "auth", "now", "later", "auth-only", {})
+    entry1 = BackupEntry(Path("/a@b.c-latest-antigravity.tar.gz"), "a@b.c", "Pro", "auth", "now", "later", "auth-only", {})
     entry2 = BackupEntry(Path("/a2"), "unknown", "Pro", "auth", "now", "later", "auth-only", {})
     print_entries_table([entry1, entry2])
     out = capsys.readouterr().out

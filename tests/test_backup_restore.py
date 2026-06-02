@@ -115,15 +115,7 @@ def test_auth_only_backup_and_restore_roundtrip(tmp_path: Path, monkeypatch: Any
         json.loads((dest_gemini / "google_accounts.json").read_text(encoding="utf-8"))["active"]
         == "dest-root@example.com"
     )
-    assert any(
-        path.name.endswith("-person@example.com-pre-restore-antigravity.tar.gz")
-        for path in safety_dir.glob("*person@example.com-pre-restore-antigravity.tar.gz")
-    )
-    safety_snapshot = next(safety_dir.glob("*person@example.com-pre-restore-antigravity.tar.gz"))
-    with tarfile.open(safety_snapshot, "r:gz") as tar:
-        names = set(tar.getnames())
-    assert not any("/gemini/" in name or name.endswith("/gemini") for name in names)
-    assert sorted(path.name for path in safety_dir.iterdir()) == [safety_snapshot.name]
+
 
 
 def test_backup_anchor_prefers_gemini_flash_reset() -> None:
@@ -377,6 +369,4 @@ def test_perform_full_restore_creates_one_safety_archive(
         )
     )
 
-    assert safety_path is not None
-    assert sorted(path.name for path in safety_dir.iterdir()) == [safety_path.name]
-    assert safety_path.name.endswith("-current@example.com-pre-restore-antigravity.tar.gz")
+    assert safety_path is None

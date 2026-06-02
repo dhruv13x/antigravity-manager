@@ -181,12 +181,13 @@ def create_backup_archive(
             tar.add(temp_metadata_path, arcname=temp_metadata_path.name, recursive=False)
 
 
-def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
+def perform_backup(args: Any, status: LiveStatus | None = None) -> tuple[Path, Path, dict[str, Any]]:
     antigravity_home = Path(args.source_dir).expanduser()
     if not antigravity_home.is_dir():
         raise FileNotFoundError(f"Antigravity directory does not exist: {antigravity_home}")
 
-    status = get_status_for_backup(args)
+    if status is None:
+        status = get_status_for_backup(args)
     backup_dir = Path(args.backup_dir).expanduser()
     decision_model = getattr(args, "decision_model", DEFAULT_DECISION_MODEL)
     backup_anchor_at, backup_anchor_source, backup_anchor_model = resolve_backup_anchor(
@@ -269,10 +270,6 @@ def perform_backup(args: Any) -> tuple[Path, Path, dict[str, Any]]:
 
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
-    latest_path = backup_dir / f"{status.email}-latest-antigravity.tar.gz"
-    if latest_path.exists() or latest_path.is_symlink():
-        latest_path.unlink()
-    latest_path.symlink_to(archive_path.name)
     update_registry_from_status(status)
     return archive_path, metadata_path, metadata
 

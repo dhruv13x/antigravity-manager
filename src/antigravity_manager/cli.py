@@ -45,7 +45,7 @@ from .sync import (
     push_backup,
 )
 from .ui import banner, console, error_console, print_rich_help
-from .utils import build_archive_name, safe_label
+from .utils import build_archive_name, safe_label, read_active_email
 
 
 def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
@@ -574,7 +574,26 @@ def handle_restore(args: argparse.Namespace) -> None:
     if getattr(args, "full", None) is None:
         args.full = not getattr(args, "auth_only", False)
     pull_cloud_backup_if_requested(args)
-    capture_and_save_current_status(args)
+    status = capture_and_save_current_status(args)
+    if status and not getattr(args, "dry_run", False):
+        try:
+            console.print(f"[cyan]Auto-backing up active account ({status.email}) before restore...[/cyan]")
+            backup_args = argparse.Namespace(
+                source_dir=args.dest_dir,
+                backup_dir=args.backup_dir,
+                without_status_check=True,
+                status_file=None,
+                auth_only=False,
+                include_bin=False,
+                include_logs=False,
+                decision_model=getattr(args, "decision_model", DEFAULT_DECISION_MODEL),
+                dry_run=False,
+                force=True,
+                encrypt=False,
+            )
+            perform_backup(backup_args, status=status)
+        except Exception as e:
+            console.print(f"[warning]Failed to auto-backup active account before restore: {e}[/warning]")
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
     save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
     console.print(
@@ -695,7 +714,26 @@ def handle_use(args: argparse.Namespace) -> None:
     args.from_archive = None
     args.email = None
     pull_cloud_backup_if_requested(args)
-    capture_and_save_current_status(args)
+    status = capture_and_save_current_status(args)
+    if status and not getattr(args, "dry_run", False):
+        try:
+            console.print(f"[cyan]Auto-backing up active account ({status.email}) before restore...[/cyan]")
+            backup_args = argparse.Namespace(
+                source_dir=args.dest_dir,
+                backup_dir=args.backup_dir,
+                without_status_check=True,
+                status_file=None,
+                auth_only=False,
+                include_bin=False,
+                include_logs=False,
+                decision_model=getattr(args, "decision_model", DEFAULT_DECISION_MODEL),
+                dry_run=False,
+                force=True,
+                encrypt=False,
+            )
+            perform_backup(backup_args, status=status)
+        except Exception as e:
+            console.print(f"[warning]Failed to auto-backup active account before restore: {e}[/warning]")
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
     save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
     console.print(

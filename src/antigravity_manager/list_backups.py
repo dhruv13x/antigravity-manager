@@ -96,7 +96,7 @@ def iter_backup_archives(backup_dir: Path) -> list[Path]:
         backup_dir.glob("*-antigravity.tar.gz.gpg")
     )
     return sorted(
-        [path for path in archives if "-latest-antigravity.tar.gz" not in path.name],
+        archives,
         key=lambda path: path.name,
         reverse=True,
     )
@@ -223,25 +223,23 @@ def parse_dt(value: str) -> datetime | None:
 
 def print_entries_table(entries: list[BackupEntry]) -> None:
     from .ui import Panel, Table, console
+    from .cooldown import format_age
 
     table = Table(show_header=True, header_style="bold bright_magenta")
     table.add_column("Archive", style="bright_cyan")
-    table.add_column("Email", style="bright_green")
-    table.add_column("Plan")
-    table.add_column("Mode", justify="center")
-    table.add_column("Captured", justify="right", style="dim")
-    table.add_column("Next Available", justify="right", style="bright_yellow")
+    table.add_column("Captured", justify="right", style="bright_yellow")
 
     for entry in entries:
         if entry.email == "unknown":
             continue
+        captured_dt = parse_dt(entry.captured_at)
+        captured_str = format_age(captured_dt) if captured_dt else entry.captured_at
+        archive_str = entry.archive_path.name
+        if entry.plan and "pro" in entry.plan.lower():
+            archive_str = f"{archive_str} (Pro)"
         table.add_row(
-            entry.archive_path.name,
-            entry.email,
-            entry.plan,
-            entry.backup_mode,
-            entry.captured_at,
-            entry.next_available_at,
+            archive_str,
+            captured_str,
         )
     console.print(
         Panel(

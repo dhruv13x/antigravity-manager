@@ -18,7 +18,7 @@ def safe_label(value: str | None) -> str:
 
 
 def build_archive_name(captured_at: datetime, email: str | None) -> str:
-    return f"{captured_at.strftime('%Y-%m-%d-%H%M%S')}-{safe_label(email)}-antigravity.tar.gz"
+    return f"{safe_label(email)}-latest-antigravity.tar.gz"
 
 
 def read_active_email(antigravity_home: Path | None = None) -> str | None:

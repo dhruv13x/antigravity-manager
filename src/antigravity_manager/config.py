@@ -26,7 +26,6 @@ ANTIGRAVITY_AUTH_FILES = (
     "antigravity-oauth-token",
     "installation_id",
     "settings.json",
-    "keybindings.json",
     "cache/onboarding.json",
 )
 

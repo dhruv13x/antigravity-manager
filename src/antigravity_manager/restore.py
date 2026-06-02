@@ -232,11 +232,6 @@ def perform_restore(args: Any) -> tuple[Path, dict[str, Any], list[Path], Path |
         extracted_dir = Path(temp_dir_str)
         safe_extract(archive_path, extracted_dir)
         safety_path = None
-        if not (getattr(args, "full", False) and getattr(args, "force", False)):
-            safety_path = snapshot_current_state(
-                antigravity_home=antigravity_home,
-                dry_run=getattr(args, "dry_run", False),
-            )
         if getattr(args, "full", False):
             restore_full(
                 extracted_dir,

@@ -249,6 +249,11 @@ def format_age(checked_at: datetime | None, *, now: datetime | None = None) -> s
     if checked_at is None:
         return "-"
     current = now if now is not None else datetime.now(checked_at.tzinfo).astimezone()
+    if (checked_at.tzinfo is None) != (current.tzinfo is None):
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.astimezone()
+        else:
+            current = current.astimezone()
     seconds = max(0, int((current - checked_at).total_seconds()))
     if seconds < 60:
         return f"{seconds}s ago"
