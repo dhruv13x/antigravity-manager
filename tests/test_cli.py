@@ -267,16 +267,11 @@ def test_save_status_metadata_writes_cloud_listable_event_and_latest(tmp_path: A
         ),
     )
 
-    event_path = save_status_metadata(status, tmp_path)
-    latest_path = tmp_path / "status" / "latest" / "person@example.com.status.json"
+    latest_path = save_status_metadata(status, tmp_path)
+    expected_path = tmp_path / "status" / "latest" / "person@example.com.status.json"
 
-    assert event_path.exists()
+    assert latest_path == expected_path
     assert latest_path.exists()
-    assert event_path.parent == tmp_path / "status" / "events"
-    assert "email_person@example.com" in event_path.name
-    assert "checked_2026-05-26T100000+0530" in event_path.name
-    assert "ready_2026-05-26T150000+0530" in event_path.name
-    assert "state_cooldown" in event_path.name
 
 
 def test_handle_status_marks_active_account(monkeypatch: Any, tmp_path: Any) -> None:

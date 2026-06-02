@@ -68,19 +68,10 @@ def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
         "status": status_to_dict(status),
     }
     metadata_text = json.dumps(metadata, indent=2, sort_keys=True)
-    event_path = status_event_metadata_path(
-        backup_dir,
-        email=status.email,
-        checked_at=status.captured_at,
-        ready_at=next_available_at,
-        state=status_state(status),
-    )
     latest_path = status_latest_metadata_path(backup_dir, status.email)
-    event_path.parent.mkdir(parents=True, exist_ok=True)
     latest_path.parent.mkdir(parents=True, exist_ok=True)
-    event_path.write_text(metadata_text, encoding="utf-8")
     latest_path.write_text(metadata_text, encoding="utf-8")
-    return event_path
+    return latest_path
 
 
 def status_event_metadata_path(
