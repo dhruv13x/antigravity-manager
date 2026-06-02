@@ -158,6 +158,7 @@ def test_backup_no_decision_model_found(tmp_path: Path, monkeypatch: Any) -> Non
     backup_dir = tmp_path / "backups"
     source.mkdir()
     gemini.mkdir()
+    (source / "antigravity-oauth-token").write_text("dummy-token", encoding="utf-8")
     (source / "settings.json").write_text("{}", encoding="utf-8")
     (gemini / "google_accounts.json").write_text(json.dumps({"active": "person@example.com"}))
 
@@ -196,6 +197,35 @@ def test_backup_no_decision_model_found(tmp_path: Path, monkeypatch: Any) -> Non
     )
     assert archive_path.exists()
     assert metadata["backup_anchor_model"] is None
+
+
+def test_backup_aborts_when_no_token(tmp_path: Path, monkeypatch: Any) -> None:
+    import pytest
+
+    source = tmp_path / "antigravity-cli"
+    gemini = tmp_path / "gemini"
+    backup_dir = tmp_path / "backups"
+    source.mkdir()
+    gemini.mkdir()
+    (source / "settings.json").write_text("{}", encoding="utf-8")
+    (gemini / "google_accounts.json").write_text(json.dumps({"active": "person@example.com"}))
+
+    with pytest.raises(FileNotFoundError, match="Backup aborted because 'antigravity-oauth-token' does not exist"):
+        perform_backup(
+            make_args(
+                source_dir=str(source),
+                gemini_home=str(gemini),
+                backup_dir=str(backup_dir),
+                status_file=None,
+                without_status_check=True,
+                auth_only=True,
+                include_bin=False,
+                include_logs=False,
+                decision_model="Gemini",
+                dry_run=False,
+                force=False,
+            )
+        )
 
 
 def test_safe_extract_skips_absolute_symlink(tmp_path: Path) -> None:

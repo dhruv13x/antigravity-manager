@@ -129,10 +129,14 @@ def test_cli_version_shortcut() -> None:
 def test_handle_use_aborts_when_status_capture_fails(monkeypatch: Any, tmp_path: Any) -> None:
     import pytest
 
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / "antigravity-oauth-token").touch()
+
     args = make_args(
         target="person@example.com",
         backup_dir=str(tmp_path),
-        dest_dir=str(tmp_path / "dest"),
+        dest_dir=str(dest_dir),
         dry_run=False,
         no_status_check=False,
         tmux_session_name=None,
@@ -148,15 +152,59 @@ def test_handle_use_aborts_when_status_capture_fails(monkeypatch: Any, tmp_path:
     )
     called = False
 
-    def fake_restore(_: Any) -> None:
+    def fake_restore(_: Any) -> tuple[Path, dict, list, None]:
         nonlocal called
         called = True
+        return (tmp_path / "a.tar.gz", {"email": "person@example.com"}, [], None)
 
     monkeypatch.setattr("antigravity_manager.cli.perform_restore", fake_restore)
 
     with pytest.raises(AntigravityStatusError):
         handle_use(args)
     assert called is False
+
+
+def test_handle_use_bypasses_status_check_if_no_token(monkeypatch: Any, tmp_path: Any) -> None:
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    args = make_args(
+        target="person@example.com",
+        backup_dir=str(tmp_path),
+        dest_dir=str(dest_dir),
+        dry_run=False,
+        no_status_check=False,
+        tmux_session_name=None,
+        agy_command="agy",
+        tmux_cols=140,
+        tmux_rows=45,
+        startup_timeout_seconds=30.0,
+        usage_timeout_seconds=30.0,
+    )
+
+    status_check_called = False
+    def fake_capture(**kwargs):
+        nonlocal status_check_called
+        status_check_called = True
+        return "person@example.com (Standard)\nModel Quota\n"
+
+    monkeypatch.setattr(
+        "antigravity_manager.cli.capture_tmux_status_text",
+        fake_capture,
+    )
+
+    called = False
+    def fake_restore(_: Any) -> tuple[Path, dict, list, None]:
+        nonlocal called
+        called = True
+        return (tmp_path / "a.tar.gz", {"email": "person@example.com"}, [], None)
+
+    monkeypatch.setattr("antigravity_manager.cli.perform_restore", fake_restore)
+    monkeypatch.setattr("antigravity_manager.cli.save_active_account", lambda *a, **kw: None)
+
+    handle_use(args)
+    assert status_check_called is False
+    assert called is True
 
 
 def test_handle_use_no_status_check_skips_capture(monkeypatch: Any, tmp_path: Any) -> None:

@@ -186,6 +186,13 @@ def perform_backup(args: Any, status: LiveStatus | None = None) -> tuple[Path, P
     if not antigravity_home.is_dir():
         raise FileNotFoundError(f"Antigravity directory does not exist: {antigravity_home}")
 
+    token_path = antigravity_home / "antigravity-oauth-token"
+    if not token_path.exists():
+        raise FileNotFoundError(
+            f"No active account found. Backup aborted because 'antigravity-oauth-token' "
+            f"does not exist in {antigravity_home}."
+        )
+
     if status is None:
         status = get_status_for_backup(args)
     backup_dir = Path(args.backup_dir).expanduser()

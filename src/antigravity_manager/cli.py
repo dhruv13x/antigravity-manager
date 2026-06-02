@@ -191,6 +191,10 @@ def pull_cloud_backup_if_requested(
 def capture_and_save_current_status(args: argparse.Namespace) -> LiveStatus | None:
     if getattr(args, "dry_run", False) or getattr(args, "no_status_check", False):
         return None
+    dest_dir_val = getattr(args, "dest_dir", None) or getattr(args, "source_dir", None) or ANTIGRAVITY_HOME
+    token_path = Path(dest_dir_val).expanduser() / "antigravity-oauth-token"
+    if not token_path.exists():
+        return None
     try:
         text = capture_tmux_status_text(
             session_name=getattr(args, "tmux_session_name", None),
