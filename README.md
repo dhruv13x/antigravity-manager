@@ -77,9 +77,9 @@ Factory-resets the Antigravity home after creating a safety backup first.
 
 Synchronizes local backup state with cloud storage.
 
-### `agm prune` / `agm prune-backups`
+### `agm prune`
 
-Cleans runtime and backup-related state (archives, metadata, and status events) without destroying the parts that must remain intact, such as authentication and persistent manager state.
+Cleans temporary runtime files, logs, and caches within the active Antigravity CLI state without destroying active profile state.
 
 ### `agm list-backups`
 
@@ -217,7 +217,6 @@ agm restore someone@example.com
 | `agm sync push` | Push local state to cloud storage |
 | `agm sync pull` | Pull cloud state into the local workspace |
 | `agm prune` | Clean local runtime state |
-| `agm prune-backups` | Trim backup-related state and history |
 | `--cloud` | Operate on remote state where supported |
 
 ## Configuration
@@ -240,7 +239,7 @@ Cloud storage credentials and provider settings are resolved from your environme
 2. **Archival**: `agm backup` bundles the Antigravity CLI state into a timestamped archive and records metadata for later evaluation.
 3. **Orchestration**: `agm cooldown` and `agm recommend` evaluate local and cloud metadata to determine which accounts are ready.
 4. **Restoration**: `agm restore` or `agm use` recreates a working account state from a backup, with safety recovery points automatically generated before any destructive operations.
-5. **Lifecycle cleanup**: `agm prune`, `agm prune-backups`, and `agm sync` keep the workspace and cloud inventory consistent without losing important identity state.
+5. **Lifecycle cleanup**: `agm prune` and `agm sync` keep the workspace and cloud inventory consistent without losing important identity state.
 
 ## Output examples
 

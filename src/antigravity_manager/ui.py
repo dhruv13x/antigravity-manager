@@ -69,7 +69,6 @@ def print_rich_help() -> None:
         ("use", "Auth-only restore for a specific account."),
         ("doctor", "Check local Antigravity Manager prerequisites."),
         ("prune", "Prune temporary runtime state."),
-        ("prune-backups", "Delete old backup archives and metadata."),
         ("purge", "Completely reset Antigravity state."),
         ("remove", "Remove all traces of a specific account."),
         ("profile", "Export or import manager profile."),

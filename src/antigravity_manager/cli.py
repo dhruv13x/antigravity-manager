@@ -24,7 +24,7 @@ from .doctor import print_doctor_table, run_doctor
 from .list_backups import list_backups, list_status_metadata, print_entries_table
 from .profile import export_profile, import_profile
 from .prune import perform_prune, prune_result_to_text
-from .prune_backups import perform_prune_backups
+
 from .purge import perform_purge, purge_result_to_text
 from .registry import update_registry_from_status
 from .remove import perform_remove, remove_result_to_text
@@ -439,24 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Show what would be removed without deleting."
     )
 
-    prune_backups_parser = subparsers.add_parser(
-        "prune-backups", help="Delete old backup archives and metadata."
-    )
-    prune_backups_parser.add_argument(
-        "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory."
-    )
-    prune_backups_parser.add_argument(
-        "--keep", type=int, default=1, help="Number of backups to keep per email."
-    )
-    prune_backups_parser.add_argument(
-        "--keep-latest-per-email",
-        action="store_true",
-        help="Keep only the latest backup per email.",
-    )
-    prune_backups_parser.add_argument(
-        "--dry-run", action="store_true", help="Show what would be removed without deleting."
-    )
-    add_cloud_args(prune_backups_parser)
+
 
     purge_parser = subparsers.add_parser("purge", help="Completely reset Antigravity state.")
     purge_parser.add_argument(
@@ -761,37 +744,7 @@ def handle_prune(args: argparse.Namespace) -> None:
     )
 
 
-def handle_prune_backups(args: argparse.Namespace) -> None:
-    if getattr(args, "cloud", False):
-        import tempfile
 
-        with tempfile.TemporaryDirectory(prefix="agm-cloud-prune-") as tmp_dir:
-            backup_dir = Path(tmp_dir)
-            pull_cloud_index_if_requested(args, override_backup_dir=backup_dir)
-            deleted_paths = perform_prune_backups(
-                backup_dir=backup_dir,
-                keep=args.keep,
-                keep_latest_per_email=args.keep_latest_per_email,
-                dry_run=args.dry_run,
-            )
-            if deleted_paths:
-                object_names = [str(path.relative_to(backup_dir)) for path in deleted_paths]
-                access_key, secret_key, bucket_name, endpoint_url = resolve_credentials(args)
-                delete_cloud_objects(
-                    object_names=object_names,
-                    bucket_name=bucket_name,
-                    endpoint_url=endpoint_url,
-                    access_key=access_key,
-                    secret_key=secret_key,
-                    dry_run=args.dry_run,
-                )
-    else:
-        deleted_paths = perform_prune_backups(
-            backup_dir=Path(args.backup_dir).expanduser(),
-            keep=args.keep,
-            keep_latest_per_email=args.keep_latest_per_email,
-            dry_run=args.dry_run,
-        )
 
 
 def handle_purge(args: argparse.Namespace) -> None:
@@ -936,7 +889,7 @@ def main() -> None:
         "use": handle_use,
         "doctor": handle_doctor,
         "prune": handle_prune,
-        "prune-backups": handle_prune_backups,
+
         "purge": handle_purge,
         "remove": handle_remove,
         "profile": handle_profile,
