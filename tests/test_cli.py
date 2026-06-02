@@ -268,7 +268,7 @@ def test_save_status_metadata_writes_cloud_listable_event_and_latest(tmp_path: A
     )
 
     latest_path = save_status_metadata(status, tmp_path)
-    expected_path = tmp_path / "status" / "latest" / "person@example.com.status.json"
+    expected_path = tmp_path / "person@example.com-latest-antigravity.metadata.json"
 
     assert latest_path == expected_path
     assert latest_path.exists()

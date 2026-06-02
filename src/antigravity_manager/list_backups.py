@@ -120,6 +120,7 @@ def iter_status_metadata_files(backup_dir: Path) -> list[Path]:
     if not backup_dir.exists():
         return []
     paths = [
+        *backup_dir.glob("*-latest-antigravity.metadata.json"),
         *backup_dir.glob("*.status.metadata.json"),
         *backup_dir.glob("status/events/*.json"),
         *backup_dir.glob("status/latest/*.status.json"),
@@ -134,7 +135,7 @@ def build_status_metadata_entry(metadata_path: Path) -> BackupEntry | None:
         return None
     if metadata.get("product") != "antigravity":
         return None
-    if metadata.get("record_type") != "status":
+    if metadata.get("record_type") != "status" and "status" not in metadata:
         return None
     return BackupEntry(
         archive_path=metadata_path,

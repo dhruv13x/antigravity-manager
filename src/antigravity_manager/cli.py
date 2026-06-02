@@ -53,23 +53,32 @@ def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
         (model.refresh_at for model in status.models if model.refresh_at is not None),
         default=status.captured_at,
     )
-    metadata = {
+    latest_path = backup_dir / f"{safe_label(status.email)}-latest-antigravity.metadata.json"
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    metadata = {}
+    if latest_path.exists():
+        try:
+            metadata = json.loads(latest_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    metadata.update({
         "schema_version": 1,
         "product": "antigravity",
-        "record_type": "status",
         "email": status.email,
         "plan": status.plan,
-        "created_at": status.captured_at.isoformat(),
         "captured_at": status.captured_at.isoformat(),
         "next_available_at": next_available_at.isoformat(),
-        "archive_name": None,
-        "archive_path": None,
-        "backup_mode": "status-only",
         "status": status_to_dict(status),
-    }
+    })
+    metadata.setdefault("created_at", status.captured_at.isoformat())
+    metadata.setdefault("record_type", "status")
+    metadata.setdefault("archive_name", None)
+    metadata.setdefault("archive_path", None)
+    metadata.setdefault("backup_mode", "status-only")
+
     metadata_text = json.dumps(metadata, indent=2, sort_keys=True)
-    latest_path = status_latest_metadata_path(backup_dir, status.email)
-    latest_path.parent.mkdir(parents=True, exist_ok=True)
     latest_path.write_text(metadata_text, encoding="utf-8")
     return latest_path
 
