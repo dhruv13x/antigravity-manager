@@ -1,0 +1,84 @@
+{
+  "archive_name": "deardrbose@gmail.com-latest-antigravity.tar.gz",
+  "archive_path": "/root/.antigravity-manager/backups/deardrbose@gmail.com-latest-antigravity.tar.gz",
+  "backup_anchor_at": "2026-06-09T16:53:33+05:30",
+  "backup_anchor_model": "Gemini 3.5 Flash (High)",
+  "backup_anchor_source": "decision_model_refresh_at",
+  "backup_mode": "full",
+  "captured_at": "2026-06-02T17:58:51.641666+05:30",
+  "created_at": "2026-06-02T17:57:33+05:30",
+  "decision_model": "Gemini 3.5 Flash",
+  "email": "deardrbose@gmail.com",
+  "include_bin": false,
+  "include_logs": false,
+  "next_available_at": "2026-06-09T16:53:51.641666+05:30",
+  "plan": "Standard",
+  "product": "antigravity",
+  "record_type": "status",
+  "schema_version": 1,
+  "source_antigravity_home": "/root/.gemini/antigravity-cli",
+  "status": {
+    "captured_at": "2026-06-02T17:58:51.641666+05:30",
+    "email": "deardrbose@gmail.com",
+    "is_pro": false,
+    "models": [
+      {
+        "is_available": false,
+        "model_name": "Gemini 3.5 Flash (Medium)",
+        "quota_percent_left": 80,
+        "refresh_at": "2026-06-09T16:53:51.641666+05:30",
+        "refresh_in_text": "Refreshes in 166h 55m"
+      },
+      {
+        "is_available": false,
+        "model_name": "Gemini 3.5 Flash (High)",
+        "quota_percent_left": 80,
+        "refresh_at": "2026-06-09T16:53:51.641666+05:30",
+        "refresh_in_text": "Refreshes in 166h 55m"
+      },
+      {
+        "is_available": false,
+        "model_name": "Gemini 3.5 Flash (Low)",
+        "quota_percent_left": 80,
+        "refresh_at": "2026-06-09T16:53:51.641666+05:30",
+        "refresh_in_text": "Refreshes in 166h 55m"
+      },
+      {
+        "is_available": true,
+        "model_name": "Gemini 3.1 Pro (Low)",
+        "quota_percent_left": 100,
+        "refresh_at": null,
+        "refresh_in_text": null
+      },
+      {
+        "is_available": true,
+        "model_name": "Gemini 3.1 Pro (High)",
+        "quota_percent_left": 100,
+        "refresh_at": null,
+        "refresh_in_text": null
+      },
+      {
+        "is_available": true,
+        "model_name": "Claude Sonnet 4.6 (Thinking)",
+        "quota_percent_left": 100,
+        "refresh_at": null,
+        "refresh_in_text": null
+      },
+      {
+        "is_available": true,
+        "model_name": "Claude Opus 4.6 (Thinking)",
+        "quota_percent_left": 100,
+        "refresh_at": null,
+        "refresh_in_text": null
+      },
+      {
+        "is_available": true,
+        "model_name": "GPT-OSS 120B (Medium)",
+        "quota_percent_left": 100,
+        "refresh_at": null,
+        "refresh_in_text": null
+      }
+    ],
+    "plan": "Standard"
+  }
+}

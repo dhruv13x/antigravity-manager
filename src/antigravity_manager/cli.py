@@ -78,6 +78,9 @@ def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
     metadata.setdefault("archive_path", None)
     metadata.setdefault("backup_mode", "status-only")
 
+    if metadata.get("archive_name") is not None:
+        metadata.pop("record_type", None)
+
     metadata_text = json.dumps(metadata, indent=2, sort_keys=True)
     latest_path.write_text(metadata_text, encoding="utf-8")
     return latest_path
