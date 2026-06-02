@@ -1,5 +1,15 @@
 # Changelog
 
+## [7.0.0] - 2026-06-02
+### Bug Fixes
+- pop record_type from consolidated metadata if backup exists to ensure correct listing
+- restrict status metadata to a single latest file per account and preserve original one-backup-per-account logic
+- generate timestamped archive filenames to support multiple backups per account
+- bypass status check and abort backup when antigravity-oauth-token is missing
+### Other Changes
+- remove temporary metadata files
+- consolidate backup and status metadata into a single latest metadata file per account
+
 ## [6.0.0] - 2026-06-02
 
 ## [5.0.0] - 2026-05-26
