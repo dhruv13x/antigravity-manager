@@ -124,3 +124,35 @@ def test_format_model_usage():
     assert "G3.5F" in format_model_usage(m3)
     assert "20%" in format_model_usage(m3)
     assert "3h19m" in format_model_usage(m3).replace(" ", "")
+
+
+def test_evaluate_entries_sorting_by_last_checked(monkeypatch):
+    monkeypatch.setattr("antigravity_manager.cooldown.load_registry", lambda: {})
+    e1 = BackupEntry(
+        Path("a"),
+        "newer@example.com",
+        "pro",
+        "2024-01-01T11:00:00+00:00",
+        "2024-01-01T11:00:00+00:00",
+        "2024-01-01T11:00:00+00:00",
+        "status-only",
+        {"email": "newer@example.com", "captured_at": "2024-01-01T11:00:00+00:00", "status": {"models": []}},
+    )
+    e2 = BackupEntry(
+        Path("b"),
+        "older@example.com",
+        "pro",
+        "2024-01-01T10:00:00+00:00",
+        "2024-01-01T10:00:00+00:00",
+        "2024-01-01T10:00:00+00:00",
+        "status-only",
+        {"email": "older@example.com", "captured_at": "2024-01-01T10:00:00+00:00", "status": {"models": []}},
+    )
+    statuses = evaluate_entries(
+        [e1, e2],
+        now=datetime(2024, 1, 1, 12, tzinfo=UTC),
+    )
+    assert len(statuses) == 2
+    assert statuses[0].email == "older@example.com"
+    assert statuses[1].email == "newer@example.com"
+

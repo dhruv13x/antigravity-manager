@@ -149,9 +149,13 @@ def evaluate_entries(
     latest: dict[str, CooldownStatus] = {}
     latest_seen_at: dict[str, datetime] = {}
     for entry in entries:
+        if entry.email == "unknown":
+            continue
         status = evaluate_metadata(
             entry.metadata, source=entry.source, now=now, decision_model=decision_model
         )
+        if status.email == "unknown":
+            continue
         seen_at = parse_dt(entry.captured_at) or parse_dt(entry.created_at) or datetime.min
         existing = latest.get(status.email)
         if existing is None or seen_at >= latest_seen_at.get(status.email, datetime.min):
@@ -159,15 +163,28 @@ def evaluate_entries(
             latest_seen_at[status.email] = seen_at
 
     for email, record in load_registry().items():
+        if email == "unknown":
+            continue
+        if "email" not in record:
+            record = dict(record)
+            record["email"] = email
         status = evaluate_metadata(
             record, source="registry", now=now, decision_model=decision_model
         )
+        if status.email == "unknown":
+            continue
         latest[email] = status
 
     return sorted(
         latest.values(),
-        key=lambda item: (item.status != "ready", item.remaining_seconds, item.email),
+        key=lambda item: (
+            item.status != "ready",
+            item.remaining_seconds,
+            item.last_checked_at.timestamp() if item.last_checked_at else float("inf"),
+            item.email,
+        ),
     )
+
 
 
 def format_model_usage(model: ModelCooldown) -> str:
@@ -322,7 +339,7 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
         if status.email == "unknown":
             continue
         if status.email == active_email:
-            status_text = "[bold bright_green]ACTIVE[/]"
+            status_text = "[bold bright_blue]ACTIVE[/]"
         elif status.status == "ready":
             status_text = "[bold bright_green]READY[/]"
         else:
