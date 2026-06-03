@@ -1,5 +1,9 @@
 # Changelog
 
+## [9.0.0] - 2026-06-03
+### Features
+- rotate accounts by last checked time and change active status style to bright blue
+
 ## [8.0.0] - 2026-06-02
 ### Features
 - add agm sync auto for bidirectional cloud synchronization
