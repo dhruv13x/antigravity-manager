@@ -1,5 +1,7 @@
 # Changelog
 
+## [10.0.0] - 2026-06-04
+
 ## [9.0.0] - 2026-06-03
 ### Features
 - rotate accounts by last checked time and change active status style to bright blue
