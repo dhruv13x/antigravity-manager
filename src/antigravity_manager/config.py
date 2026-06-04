@@ -29,11 +29,7 @@ ANTIGRAVITY_AUTH_FILES = (
     "cache/onboarding.json",
 )
 
-EXCLUDED_TOP_LEVEL_NAMES = {
-    "log",
-    "updater",
-    "knowledge",
-}
+EXCLUDED_TOP_LEVEL_NAMES: set[str] = set()
 
 DEFAULT_COOLDOWN_DISPLAY_LIMIT = 200
 DEFAULT_DECISION_MODEL = "Gemini 3.5 Flash"

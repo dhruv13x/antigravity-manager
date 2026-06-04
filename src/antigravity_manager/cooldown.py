@@ -242,14 +242,14 @@ def color_for_model(model: ModelCooldown, text: str) -> str:
 
 def compact_model_name(name: str) -> str:
     replacements = {
-        "Gemini 3.5 Flash": "G3.5F",
-        "Gemini 3.1 Pro": "G3.1P",
+        "Gemini 3.5 Flash": "G3.5Flash",
+        "Gemini 3.1 Pro": "G3.1Pro",
         "Claude Sonnet 4.6": "Son4.6",
         "Claude Opus 4.6": "Opus4.6",
         "GPT-OSS 120B": "GPT120B",
         "(Thinking)": "Think",
         "(Medium)": "Med",
-        "(High)": "High",
+        "(High)": "",
         "(Low)": "Low",
     }
     compact = name

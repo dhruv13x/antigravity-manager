@@ -170,14 +170,42 @@ def create_backup_archive(
             json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8"
         )
 
+        def tar_filter(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo | None:
+            if tarinfo.name.endswith("-wal") or tarinfo.name.endswith("-shm") or tarinfo.name.endswith(".lock"):
+                return None
+            return tarinfo
+
         with tarfile.open(archive_path, "w:gz") as tar:
+            def _add_safe(path_to_add: Path, arc_name: str) -> None:
+                if not path_to_add.exists():
+                    return
+                try:
+                    tar.add(
+                        path_to_add,
+                        arcname=arc_name,
+                        recursive=False,
+                        filter=tar_filter,
+                    )
+                except OSError:
+                    # Ignore read errors (e.g., unexpected end of data) if a file
+                    # is truncated or deleted concurrently during the backup process.
+                    return
+
+                if path_to_add.is_dir():
+                    try:
+                        children = list(path_to_add.iterdir())
+                    except OSError:
+                        return
+                    for child in children:
+                        _add_safe(child, f"{arc_name}/{child.name}")
+
             for path in iter_antigravity_entries(
                 antigravity_home,
                 auth_only=auth_only,
                 include_bin=include_bin,
                 include_logs=include_logs,
             ):
-                tar.add(path, arcname=f"antigravity-cli/{path.relative_to(antigravity_home)}", recursive=True)
+                _add_safe(path, f"antigravity-cli/{path.relative_to(antigravity_home)}")
             tar.add(temp_metadata_path, arcname=temp_metadata_path.name, recursive=False)
 
 

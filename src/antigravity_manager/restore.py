@@ -203,7 +203,7 @@ def snapshot_current_state(
             antigravity_home,
             snapshot_dir / "antigravity-cli",
             symlinks=True,
-            ignore=shutil.ignore_patterns("log", "updater", "knowledge"),
+            ignore=shutil.ignore_patterns("log", "*-wal", "*-shm"),
         )
 
     archive_directory(snapshot_dir, snapshot_archive, arcname=snapshot_dir.name)

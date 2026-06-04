@@ -460,7 +460,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Show what would be removed without deleting."
     )
 
-    remove_parser = subparsers.add_parser("remove", help="Remove all traces of a specific account.")
+    remove_parser = subparsers.add_parser("remove", aliases=["rm"], help="Remove all traces of a specific account.")
     remove_parser.add_argument("email", help="Account email to remove.")
     remove_parser.add_argument(
         "--backup-dir", default=str(DEFAULT_BACKUP_DIR), help="Backup directory."
@@ -545,7 +545,10 @@ def handle_restore(args: argparse.Namespace) -> None:
     if getattr(args, "full", None) is None:
         args.full = not getattr(args, "auth_only", False)
     pull_cloud_backup_if_requested(args)
-    status = capture_and_save_current_status(args)
+    if hasattr(args, "pre_captured_status"):
+        status = args.pre_captured_status
+    else:
+        status = capture_and_save_current_status(args)
     if status and not getattr(args, "dry_run", False):
         try:
             console.print(f"[cyan]Auto-backing up active account ({status.email}) before restore...[/cyan]")
@@ -631,6 +634,14 @@ def handle_list_backups(args: argparse.Namespace) -> None:
 def handle_recommend(args: argparse.Namespace) -> None:
     if args.use and args.restore:
         raise ValueError("Use either --use or --restore, not both.")
+    
+    captured_status = None
+    if args.use or args.restore:
+        try:
+            captured_status = capture_and_save_current_status(args)
+        except Exception as e:
+            console.print(f"[warning]Failed to capture current status before recommendation: {e}[/warning]")
+            
     pull_cloud_index_if_requested(args)
     backup_dir = Path(args.backup_dir).expanduser()
     entries = [
@@ -666,6 +677,7 @@ def handle_recommend(args: argparse.Namespace) -> None:
         args.full = False
         args.force = False
         args.from_archive = None
+        args.pre_captured_status = captured_status
         pull_cloud_backup_if_requested(args)
         handle_use(args)
     elif args.restore:
@@ -675,6 +687,7 @@ def handle_recommend(args: argparse.Namespace) -> None:
         args.full = True
         args.force = False
         args.from_archive = None
+        args.pre_captured_status = captured_status
         pull_cloud_backup_if_requested(args)
         handle_restore(args)
 
@@ -685,7 +698,10 @@ def handle_use(args: argparse.Namespace) -> None:
     args.from_archive = None
     args.email = None
     pull_cloud_backup_if_requested(args)
-    status = capture_and_save_current_status(args)
+    if hasattr(args, "pre_captured_status"):
+        status = args.pre_captured_status
+    else:
+        status = capture_and_save_current_status(args)
     if status and not getattr(args, "dry_run", False):
         try:
             console.print(f"[cyan]Auto-backing up active account ({status.email}) before restore...[/cyan]")
@@ -892,6 +908,7 @@ def main() -> None:
 
         "purge": handle_purge,
         "remove": handle_remove,
+        "rm": handle_remove,
         "profile": handle_profile,
         "sync": handle_sync,
     }

@@ -70,7 +70,7 @@ def print_rich_help() -> None:
         ("doctor", "Check local Antigravity Manager prerequisites."),
         ("prune", "Prune temporary runtime state."),
         ("purge", "Completely reset Antigravity state."),
-        ("remove", "Remove all traces of a specific account."),
+        ("remove (rm)", "Remove all traces of a specific account."),
         ("profile", "Export or import manager profile."),
         ("sync", "Sync backups with S3 bucket."),
     ]

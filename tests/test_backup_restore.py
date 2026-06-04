@@ -400,3 +400,50 @@ def test_perform_full_restore_creates_one_safety_archive(
     )
 
     assert safety_path is None
+
+
+def test_backup_filters_sqlite_wal_files(tmp_path: Path, monkeypatch: Any) -> None:
+    source = tmp_path / "antigravity-cli"
+    backup_dir = tmp_path / "backups"
+    source.mkdir()
+    (source / "antigravity-oauth-token").write_text("token", encoding="utf-8")
+    (source / "active.db").write_text("db-content", encoding="utf-8")
+    (source / "active.db-wal").write_text("wal-content", encoding="utf-8")
+    (source / "active.db-shm").write_text("shm-content", encoding="utf-8")
+    (source / "google_accounts.json").write_text(
+        json.dumps({"active": "person@example.com"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.backup.update_registry_from_status",
+        lambda status: None,
+    )
+    
+    archive_path, _, _ = perform_backup(
+        make_args(
+            source_dir=str(source),
+            backup_dir=str(backup_dir),
+            status_file=None,
+            without_status_check=True,
+            auth_only=False,
+            include_bin=False,
+            include_logs=False,
+            decision_model="Gemini 3.5 Flash",
+            dry_run=False,
+            force=False,
+            tmux_session_name=None,
+            agy_command="agy",
+            tmux_cols=140,
+            tmux_rows=45,
+            startup_timeout_seconds=30.0,
+            usage_timeout_seconds=30.0,
+        )
+    )
+    
+    with tarfile.open(archive_path, "r:gz") as tar:
+        names = set(tar.getnames())
+    
+    assert "antigravity-cli/antigravity-oauth-token" in names
+    assert "antigravity-cli/active.db" in names
+    assert "antigravity-cli/active.db-wal" not in names
+    assert "antigravity-cli/active.db-shm" not in names

@@ -19,9 +19,12 @@ def _copy_snapshot_item(path: Path, snapshot_dir: Path, name: str) -> None:
             path,
             target,
             symlinks=True,
-            ignore=shutil.ignore_patterns("log", "updater", "knowledge"),
+            ignore=shutil.ignore_patterns("log", "*-wal", "*-shm"),
         )
     else:
+        # Avoid copying active sqlite WAL files if they are handled as single files
+        if path.name.endswith("-wal") or path.name.endswith("-shm"):
+            return
         shutil.copy2(path, target)
 
 
