@@ -1,5 +1,9 @@
 # Changelog
 
+## [12.0.0] - 2026-06-05
+### Features
+- improve auto-backup visibility and harden status detection
+
 ## [11.0.0] - 2026-06-04
 
 ## [10.0.0] - 2026-06-04
