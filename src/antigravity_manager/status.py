@@ -25,7 +25,10 @@ LOGIN_PROMPT_RE = re.compile(r"Welcome to the Antigravity CLI\. You are currentl
 ONBOARDING_PROMPT_RE = re.compile(r"Welcome to Antigravity CLI!.*Choose your color scheme", re.IGNORECASE | re.DOTALL)
 USAGE_HEADER_RE = re.compile(r"Model Quota", re.IGNORECASE)
 MODEL_NAME_RE = re.compile(r"^(?![│└>])(?=.*\()(?=.*\))(?=.*[A-Za-z]).+$")
-TRUST_PROMPT_RE = re.compile(r"Do you trust the contents of this project\?", re.IGNORECASE)
+TRUST_PROMPT_RE = re.compile(
+    r"Do you trust the contents of this project\?.*requires permission to read, edit, and execute.*Yes, I trust this folder",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 class AntigravityStatusError(RuntimeError):
@@ -91,6 +94,8 @@ def wait_for_prompt(pane_id: str, *, timeout_seconds: float) -> str:
 
             # 1. Handle directory trust prompt (immediate action)
             if TRUST_PROMPT_RE.search(output):
+                login_reads = 0
+                onboarding_reads = 0
                 run_command(["tmux", "send-keys", "-t", pane_id, "Enter"], check=False)
                 time.sleep(1)
                 continue

@@ -539,6 +539,37 @@ def handle_backup(args: argparse.Namespace) -> None:
     )
 
 
+def _auto_backup_before_switch(args: argparse.Namespace, status: LiveStatus | None) -> None:
+    if not status or getattr(args, "dry_run", False):
+        return
+
+    try:
+        console.print(
+            f"[cyan]Auto-backing up active account ({status.email}) before restore...[/cyan]"
+        )
+        backup_args = argparse.Namespace(
+            source_dir=getattr(args, "dest_dir", ANTIGRAVITY_HOME),
+            backup_dir=args.backup_dir,
+            without_status_check=True,
+            status_file=None,
+            auth_only=False,
+            include_bin=False,
+            include_logs=False,
+            decision_model=getattr(args, "decision_model", DEFAULT_DECISION_MODEL),
+            dry_run=False,
+            force=True,
+            encrypt=False,
+        )
+        archive_path, metadata_path, metadata = perform_backup(backup_args, status=status)
+        console.print(
+            backup_result_to_text(archive_path, metadata_path, metadata, dry_run=False)
+        )
+    except Exception as e:
+        console.print(
+            f"[warning]Failed to auto-backup active account before restore: {e}[/warning]"
+        )
+
+
 def handle_restore(args: argparse.Namespace) -> None:
     if getattr(args, "auth_only", False) and getattr(args, "full", None):
         raise ValueError("Use either --auth-only or --full, not both.")
@@ -549,25 +580,9 @@ def handle_restore(args: argparse.Namespace) -> None:
         status = args.pre_captured_status
     else:
         status = capture_and_save_current_status(args)
-    if status and not getattr(args, "dry_run", False):
-        try:
-            console.print(f"[cyan]Auto-backing up active account ({status.email}) before restore...[/cyan]")
-            backup_args = argparse.Namespace(
-                source_dir=args.dest_dir,
-                backup_dir=args.backup_dir,
-                without_status_check=True,
-                status_file=None,
-                auth_only=False,
-                include_bin=False,
-                include_logs=False,
-                decision_model=getattr(args, "decision_model", DEFAULT_DECISION_MODEL),
-                dry_run=False,
-                force=True,
-                encrypt=False,
-            )
-            perform_backup(backup_args, status=status)
-        except Exception as e:
-            console.print(f"[warning]Failed to auto-backup active account before restore: {e}[/warning]")
+
+    _auto_backup_before_switch(args, status)
+
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
     save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
     console.print(
@@ -702,25 +717,9 @@ def handle_use(args: argparse.Namespace) -> None:
         status = args.pre_captured_status
     else:
         status = capture_and_save_current_status(args)
-    if status and not getattr(args, "dry_run", False):
-        try:
-            console.print(f"[cyan]Auto-backing up active account ({status.email}) before restore...[/cyan]")
-            backup_args = argparse.Namespace(
-                source_dir=args.dest_dir,
-                backup_dir=args.backup_dir,
-                without_status_check=True,
-                status_file=None,
-                auth_only=False,
-                include_bin=False,
-                include_logs=False,
-                decision_model=getattr(args, "decision_model", DEFAULT_DECISION_MODEL),
-                dry_run=False,
-                force=True,
-                encrypt=False,
-            )
-            perform_backup(backup_args, status=status)
-        except Exception as e:
-            console.print(f"[warning]Failed to auto-backup active account before restore: {e}[/warning]")
+
+    _auto_backup_before_switch(args, status)
+
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
     save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
     console.print(

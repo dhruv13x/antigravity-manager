@@ -72,8 +72,14 @@ def test_wait_for_prompt_handles_trust_prompt() -> None:
         # First call: show trust prompt
         # Second call: show email and prompt (logged in)
         # Succeed after 3 stable reads of the second output
+        trust_prompt = (
+            "Do you trust the contents of this project?\n"
+            "Antigravity CLI requires permission to read, edit, and execute files here.\n"
+            "> Yes, I trust this folder\n"
+            "  No, exit"
+        )
         mock_capture.side_effect = [
-            "Do you trust the contents of this project?",
+            trust_prompt,
             "user@example.com (Pro)\n>",
             "user@example.com (Pro)\n>",
             "user@example.com (Pro)\n>",
