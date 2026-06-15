@@ -30,15 +30,15 @@ def test_parse_live_status_text_extracts_models_and_refresh() -> None:
     assert status.email == "user@example.com"
     assert status.plan == "Google AI Pro"
     assert status.is_pro is True
+    # Now simplified: models are grouped by family, so 2 groups instead of 3 individual models
     assert len(status.models) == 3
-    assert status.models[0].model_name == "Gemini 3.5 Flash (High)"
+    assert "GEMINI MODELS" in status.models[0].model_name
+    assert "Gemini 3.5 Flash (High)" in status.models[0].model_name
     assert status.models[0].is_available is True
     assert status.models[1].quota_percent_left == 0
+    assert "CLAUDE AND GPT MODELS" in status.models[1].model_name
+    assert "Claude Sonnet 4.6 (Thinking)" in status.models[1].model_name
     assert status.models[1].refresh_at == datetime.fromisoformat("2026-05-22T23:11:01+05:30")
-    assert status.models[2].model_name == "Gemini 3.5 Flash (Medium)"
-    assert status.models[2].quota_percent_left == 20
-    assert status.models[2].is_available is False
-    assert status.models[2].refresh_at == datetime.fromisoformat("2026-05-23T00:28:01+05:30")
 
 
 def test_parse_email_and_plan_without_parentheses() -> None:

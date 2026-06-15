@@ -26,10 +26,17 @@ def save_registry(data: dict[str, dict[str, Any]], path: Path = COOLDOWN_REGISTR
 
 def update_registry_from_status(status: LiveStatus, *, dry_run: bool = False) -> None:
     registry = load_registry()
-    next_refreshes = [model.refresh_at for model in status.models if model.refresh_at is not None]
-    next_available_at = (
-        max(next_refreshes).isoformat() if next_refreshes else status.captured_at.isoformat()
-    )
+    
+    # Gemini-aware readiness fallback (mirrors cli.py/backup.py logic)
+    next_available_at_dt = status.captured_at
+    gemini_models = [m for m in status.models if "gemini" in m.model_name.lower() and "flash" in m.model_name.lower()]
+    if gemini_models and gemini_models[0].refresh_at:
+        next_available_at_dt = gemini_models[0].refresh_at
+    else:
+        refreshes = [m.refresh_at for m in status.models if m.refresh_at is not None]
+        if refreshes:
+            next_available_at_dt = max(refreshes)
+
     registry[status.email] = {
         "schema_version": 1,
         "product": "antigravity",
@@ -38,7 +45,7 @@ def update_registry_from_status(status: LiveStatus, *, dry_run: bool = False) ->
         "is_pro": status.is_pro,
         "captured_at": status.captured_at.isoformat(),
         "updated_at": datetime.now().astimezone().isoformat(),
-        "next_available_at": next_available_at,
+        "next_available_at": next_available_at_dt.isoformat(),
         "status": status_to_dict(status),
     }
     if not dry_run:

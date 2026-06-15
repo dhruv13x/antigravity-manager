@@ -25,9 +25,21 @@ def find_decision_model(
 ) -> Any | None:
     pattern = model_pattern.lower()
     matches = [model for model in status.models if pattern in model.model_name.lower()]
+    
+    # Fuzzy fallback for new layout if no exact match (e.g., matching "Gemini" in "GEMINI MODELS")
+    if not matches:
+        if "gemini" in pattern:
+            matches = [m for m in status.models if "gemini" in m.model_name.lower()]
+        elif "claude" in pattern:
+            matches = [m for m in status.models if "claude" in m.model_name.lower()]
+        elif "gpt" in pattern:
+            matches = [m for m in status.models if "gpt" in m.model_name.lower()]
+
     if not matches:
         return None
-    high = [model for model in matches if "(high)" in model.model_name.lower()]
+        
+    # Prefer High/Pro tiers if multiple matches
+    high = [model for model in matches if any(x in model.model_name.lower() for x in ("(high)", "pro"))]
     return high[0] if high else matches[0]
 
 
@@ -40,7 +52,7 @@ def resolve_backup_anchor(
     if model and model.is_available:
         return (
             status.captured_at + timedelta(hours=ESTIMATED_MODEL_RESET_HOURS),
-            "estimated_5h_decision_model_available",
+            f"estimated_{ESTIMATED_MODEL_RESET_HOURS}h_decision_model_available",
             model.model_name,
         )
 
@@ -50,15 +62,54 @@ def resolve_backup_anchor(
 
     return (
         status.captured_at + timedelta(hours=ESTIMATED_MODEL_RESET_HOURS),
-        "estimated_5h_no_model_reset_in_usage",
+        f"estimated_{ESTIMATED_MODEL_RESET_HOURS}h_no_model_reset_in_usage",
         model.model_name if model else None,
     )
 
 
 def fallback_status(email: str | None) -> LiveStatus:
-    from .status import ModelQuotaStatus
+    from .registry import load_registry
+    from .status import ModelQuotaStatus, parse_live_status_text
 
     now = datetime.now().astimezone()
+    
+    # Try to recover the last known status from the registry to preserve real cooldowns
+    if email:
+        registry = load_registry()
+        if email in registry:
+            reg_entry = registry[email]
+            status_data = reg_entry.get("status")
+            if status_data:
+                from .list_backups import parse_dt
+                models = []
+                for m in status_data.get("models", []):
+                    model_name = m.get("model_name", "unknown")
+                    # If the registry only has "unknown" or "bypassed" status, ignore it
+                    if model_name == "unknown" or "bypassed" in str(m.get("refresh_in_text", "")):
+                        models = []
+                        break
+                        
+                    refresh_at_str = m.get("refresh_at")
+                    refresh_at = parse_dt(refresh_at_str) if refresh_at_str else None
+                    
+                    models.append(ModelQuotaStatus(
+                        model_name=model_name,
+                        quota_percent_left=m.get("quota_percent_left"),
+                        refresh_in_text=m.get("refresh_in_text"),
+                        refresh_at=refresh_at,
+                        is_available=m.get("is_available", False)
+                    ))
+                
+                if models:
+                    return LiveStatus(
+                        email=email,
+                        plan=reg_entry.get("plan", "unknown"),
+                        is_pro=reg_entry.get("is_pro", False),
+                        captured_at=parse_dt(reg_entry.get("captured_at")) or now,
+                        models=tuple(models)
+                    )
+
+    # Worst-case fallback: Assume a fresh weekly reset (168h)
     reset_at = now + timedelta(hours=ESTIMATED_MODEL_RESET_HOURS)
     return LiveStatus(
         email=email or "unknown",
@@ -69,16 +120,17 @@ def fallback_status(email: str | None) -> LiveStatus:
             ModelQuotaStatus(
                 model_name="unknown",
                 quota_percent_left=None,
-                refresh_in_text="Status capture bypassed; estimated 5h cooldown",
+                refresh_in_text=f"Status capture bypassed; estimated {ESTIMATED_MODEL_RESET_HOURS}h cooldown",
                 refresh_at=reset_at,
                 is_available=False,
             ),
         ),
+
     )
 
 
 def get_status_for_backup(args: Any) -> LiveStatus:
-    if getattr(args, "without_status_check", False):
+    if getattr(args, "no_status", False):
         return fallback_status(read_active_email(Path(args.source_dir).expanduser()))
     if getattr(args, "status_file", None):
         text = Path(args.status_file).expanduser().read_text(encoding="utf-8")
@@ -107,10 +159,16 @@ def build_backup_metadata(
     backup_anchor_source: str,
     backup_anchor_model: str | None,
 ) -> dict[str, Any]:
-    next_refreshes = [model.refresh_at for model in status.models if model.refresh_at is not None]
-    next_available_at = (
-        max(next_refreshes).isoformat() if next_refreshes else status.captured_at.isoformat()
-    )
+    # Gemini-aware readiness (mirrors cli.py/registry.py logic)
+    next_available_at_dt = status.captured_at
+    gemini_models = [m for m in status.models if "gemini" in m.model_name.lower() and "flash" in m.model_name.lower()]
+    if gemini_models and gemini_models[0].refresh_at:
+        next_available_at_dt = gemini_models[0].refresh_at
+    else:
+        refreshes = [m.refresh_at for m in status.models if m.refresh_at is not None]
+        if refreshes:
+            next_available_at_dt = max(refreshes)
+
     return {
         "schema_version": 1,
         "product": "antigravity",
@@ -118,7 +176,7 @@ def build_backup_metadata(
         "plan": status.plan,
         "created_at": isoformat_local(datetime.now().astimezone()),
         "captured_at": isoformat_local(status.captured_at),
-        "next_available_at": next_available_at,
+        "next_available_at": isoformat_local(next_available_at_dt),
         "decision_model": decision_model,
         "backup_anchor_at": isoformat_local(backup_anchor_at),
         "backup_anchor_source": backup_anchor_source,

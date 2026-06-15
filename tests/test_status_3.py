@@ -27,4 +27,5 @@ def test_parse_live_status_text():
     assert st.plan == "pro"
     assert st.is_pro is True
     assert len(st.models) == 1
-    assert st.models[0].model_name == "(Gemini 3.5 Flash)"
+    assert "GEMINI MODELS" in st.models[0].model_name
+    assert "(Gemini 3.5 Flash)" in st.models[0].model_name

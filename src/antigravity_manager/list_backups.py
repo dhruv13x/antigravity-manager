@@ -217,7 +217,10 @@ def list_backups(
 
 def parse_dt(value: str) -> datetime | None:
     try:
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            return dt.astimezone()
+        return dt
     except Exception:
         return None
 

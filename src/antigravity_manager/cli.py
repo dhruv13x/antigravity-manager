@@ -50,10 +50,7 @@ from .utils import build_archive_name, safe_label, read_active_email
 
 
 def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
-    next_available_at = max(
-        (model.refresh_at for model in status.models if model.refresh_at is not None),
-        default=status.captured_at,
-    )
+    next_available_at = status_metadata_timestamp(status)
     latest_path = backup_dir / f"{safe_label(status.email)}-latest-antigravity.metadata.json"
     latest_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -97,14 +94,21 @@ def status_state(status: LiveStatus) -> str:
 
 
 def status_metadata_timestamp(status: LiveStatus) -> datetime:
+    # Try to find the refresh time of the primary decision model
+    # We look for "Gemini" and "Flash" as a fallback for the new grouping
     for model in status.models:
         model_name = model.model_name.lower()
-        if (
-            "gemini 3.5 flash" in model_name
-            and "(high)" in model_name
-            and model.refresh_at is not None
-        ):
-            return model.refresh_at
+        # Old format: "Gemini 3.5 Flash (High)"
+        # New format: "GEMINI MODELS (Gemini Flash, Gemini Pro)"
+        if "gemini" in model_name and "flash" in model_name:
+            if model.refresh_at is not None:
+                return model.refresh_at
+            
+    # Fallback to the furthest refresh time if we can't find Gemini Flash
+    refreshes = [m.refresh_at for m in status.models if m.refresh_at is not None]
+    if refreshes:
+        return max(refreshes)
+        
     return status.captured_at
 
 
@@ -124,11 +128,10 @@ def save_active_account(email: str, *, dry_run: bool = False) -> None:
 
 def add_status_skip_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--no-status-check",
         "--no-status",
         action="store_true",
-        dest="no_status_check",
-        help="Skip live status capture before switching accounts.",
+        dest="no_status",
+        help="Skip live status capture.",
     )
 
 
@@ -173,7 +176,7 @@ def pull_cloud_backup_if_requested(
 
 
 def capture_and_save_current_status(args: argparse.Namespace) -> LiveStatus | None:
-    if getattr(args, "dry_run", False) or getattr(args, "no_status_check", False):
+    if getattr(args, "dry_run", False) or getattr(args, "no_status", False):
         return None
     dest_dir_val = getattr(args, "dest_dir", None) or getattr(args, "source_dir", None) or ANTIGRAVITY_HOME
     token_path = Path(dest_dir_val).expanduser() / "antigravity-oauth-token"
@@ -192,7 +195,7 @@ def capture_and_save_current_status(args: argparse.Namespace) -> LiveStatus | No
     except Exception as exc:
         raise AntigravityStatusError(
             "Current account status could not be captured. Switch aborted. "
-            "Use --no-status-check only for first setup or corrupt current credentials."
+            "Use --no-status only for first setup or corrupt current credentials."
         ) from exc
     update_registry_from_status(status)
     save_status_metadata(status, Path(args.backup_dir).expanduser())
@@ -245,11 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     backup_parser.add_argument(
         "--status-file", help="Read captured status text from a file instead of live capture."
     )
-    backup_parser.add_argument(
-        "--without-status-check",
-        action="store_true",
-        help="Skip live status and use fallback metadata.",
-    )
+    add_status_skip_args(backup_parser)
     backup_parser.add_argument(
         "--auth-only", action="store_true", help="Archive only identity/auth files."
     )
@@ -502,10 +501,10 @@ def add_tmux_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tmux-cols", type=int, default=140, help="tmux capture width.")
     parser.add_argument("--tmux-rows", type=int, default=45, help="tmux capture height.")
     parser.add_argument(
-        "--startup-timeout-seconds", type=float, default=30.0, help="Startup wait timeout."
+        "--startup-timeout-seconds", type=float, default=15.0, help="Startup wait timeout."
     )
     parser.add_argument(
-        "--usage-timeout-seconds", type=float, default=30.0, help="/usage wait timeout."
+        "--usage-timeout-seconds", type=float, default=15.0, help="/usage wait timeout."
     )
 
 
@@ -521,7 +520,43 @@ def handle_status(args: argparse.Namespace) -> None:
             startup_timeout_seconds=args.startup_timeout_seconds,
             usage_timeout_seconds=args.usage_timeout_seconds,
         )
-    status = parse_live_status_text(text)
+    
+    # Try to load existing status for merging (handles partial probe scenarios)
+    from .registry import load_registry
+    from .status import ModelQuotaStatus
+    from .list_backups import parse_dt
+    
+    existing_status = None
+    try:
+        # We don't know the email yet, so we have to parse it first then potentially re-parse
+        # This is fast since it's just regex on local text
+        email, _ = parse_email_and_plan(text)
+        registry = load_registry()
+        if email in registry:
+            reg_entry = registry[email]
+            status_data = reg_entry.get("status")
+            if status_data:
+                models = [
+                    ModelQuotaStatus(
+                        model_name=m.get("model_name", "unknown"),
+                        quota_percent_left=m.get("quota_percent_left"),
+                        refresh_in_text=m.get("refresh_in_text"),
+                        refresh_at=parse_dt(m.get("refresh_at")) if m.get("refresh_at") else None,
+                        is_available=m.get("is_available", False)
+                    )
+                    for m in status_data.get("models", [])
+                ]
+                existing_status = LiveStatus(
+                    email=email,
+                    plan=reg_entry.get("plan", "unknown"),
+                    is_pro=reg_entry.get("is_pro", False),
+                    captured_at=parse_dt(reg_entry.get("captured_at")) or datetime.now().astimezone(),
+                    models=tuple(models)
+                )
+    except Exception:
+        pass
+
+    status = parse_live_status_text(text, existing_status=existing_status)
     if not getattr(args, "no_save", False):
         update_registry_from_status(status)
         save_status_metadata(status, Path(args.backup_dir).expanduser())
@@ -550,7 +585,7 @@ def _auto_backup_before_switch(args: argparse.Namespace, status: LiveStatus | No
         backup_args = argparse.Namespace(
             source_dir=getattr(args, "dest_dir", ANTIGRAVITY_HOME),
             backup_dir=args.backup_dir,
-            without_status_check=True,
+            no_status=True,
             status_file=None,
             auth_only=False,
             include_bin=False,
@@ -883,8 +918,8 @@ def main() -> None:
             args.tmux_session_name = None
             args.tmux_cols = 140
             args.tmux_rows = 45
-            args.startup_timeout_seconds = 30.0
-            args.usage_timeout_seconds = 30.0
+            args.startup_timeout_seconds = 15.0
+            args.usage_timeout_seconds = 15.0
     elif args.cooldown or args.command is None:
         args.command = "cooldown"
         # Populate defaults for cooldown if not provided via subcommand

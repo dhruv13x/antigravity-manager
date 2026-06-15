@@ -22,32 +22,40 @@ def perform_remove(args: Any) -> dict[str, Any]:
         "cloud_registry_removed": False,
     }
 
-    # 1. Identify local files
+    # 1. Identify local files (backups and metadata)
     local_files = []
     if backup_dir.exists():
+        # Match pattern: email-latest- or -email-
+        # We use re.escape to handle emails with dots/plus signs safely
+        import re
+        safe_email = re.escape(email)
+        # Pattern for standard backups: {email}-latest or ...-{email}-...
+        backup_pattern = re.compile(rf"(^|[-]){safe_email}(-|latest-)")
+        
         for p in backup_dir.rglob("*"):
             if not p.is_file() and not p.is_symlink():
                 continue
-            is_match = f"-{email}-" in p.name or p.name.startswith(f"{email}-latest-")
-            status_match = (
-                "status" in p.parts
-                and (
-                    f"email_{email}" in p.name
-                    or p.name == f"{email}.status.json"
-                )
-            )
-            is_backup_file = is_match and (
-                p.name.endswith(".tar.gz")
-                or p.name.endswith(".tar.gz.gpg")
-                or p.name.endswith(".metadata.json")
-            )
-            if is_backup_file or status_match:
+            
+            if backup_pattern.search(p.name):
+                # Ensure it's a known extension to avoid matching random junk
+                if p.name.endswith((".tar.gz", ".tar.gz.gpg", ".metadata.json")):
+                    local_files.append(p)
+                    continue
+
+            # Check status directory specific matches
+            if "status" in p.parts and (f"email_{email}" in p.name or p.name == f"{email}.status.json"):
                 local_files.append(p)
 
+    # 2. Identify safety backups
     safety_files = []
     if SAFETY_BACKUP_DIR.exists():
+        import re
+        safe_email = re.escape(email)
+        # Safety backups use: timestamp-{email}-pre-purge or timestamp-{email}-auto
+        safety_pattern = re.compile(rf"-{safe_email}-(pre-purge|auto|latest)")
+        
         for p in SAFETY_BACKUP_DIR.glob("*"):
-            if email in p.name:
+            if safety_pattern.search(p.name):
                 safety_files.append(p)
 
     # 3. Confirmation

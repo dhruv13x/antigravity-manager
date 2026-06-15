@@ -53,10 +53,10 @@ def test_cli_use_accepts_target() -> None:
     args = parser.parse_args(["use", "person@example.com"])
     assert args.command == "use"
     assert args.target == "person@example.com"
-    assert args.no_status_check is False
+    assert args.no_status is False
 
     args = parser.parse_args(["use", "person@example.com", "--no-status"])
-    assert args.no_status_check is True
+    assert args.no_status is True
 
     args = parser.parse_args(["use", "person@example.com", "--cloud", "--bucket-name", "b"])
     assert args.cloud is True
@@ -69,7 +69,7 @@ def test_cli_restore_accepts_target_and_auth_only_flag() -> None:
     assert args.target == "backup.tar.gz"
     assert args.auth_only is True
     assert args.full is None
-    assert args.no_status_check is False
+    assert args.no_status is False
 
     args = parser.parse_args(["restore", "backup.tar.gz", "--cloud", "--bucket-name", "b"])
     assert args.cloud is True
@@ -77,10 +77,10 @@ def test_cli_restore_accepts_target_and_auth_only_flag() -> None:
 
 def test_cli_recommend_restore_flag() -> None:
     parser = build_parser()
-    args = parser.parse_args(["recommend", "--restore", "--no-status-check"])
+    args = parser.parse_args(["recommend", "--restore", "--no-status"])
     assert args.command == "recommend"
     assert args.restore is True
-    assert args.no_status_check is True
+    assert args.no_status is True
 
     args = parser.parse_args(["recommend", "--cloud", "--bucket-name", "b"])
     assert args.cloud is True
@@ -138,7 +138,7 @@ def test_handle_use_aborts_when_status_capture_fails(monkeypatch: Any, tmp_path:
         backup_dir=str(tmp_path),
         dest_dir=str(dest_dir),
         dry_run=False,
-        no_status_check=False,
+        no_status=False,
         tmux_session_name=None,
         agy_command="agy",
         tmux_cols=140,
@@ -173,7 +173,7 @@ def test_handle_use_bypasses_status_check_if_no_token(monkeypatch: Any, tmp_path
         backup_dir=str(tmp_path),
         dest_dir=str(dest_dir),
         dry_run=False,
-        no_status_check=False,
+        no_status=False,
         tmux_session_name=None,
         agy_command="agy",
         tmux_cols=140,
@@ -207,13 +207,13 @@ def test_handle_use_bypasses_status_check_if_no_token(monkeypatch: Any, tmp_path
     assert called is True
 
 
-def test_handle_use_no_status_check_skips_capture(monkeypatch: Any, tmp_path: Any) -> None:
+def test_handle_use_no_status_skips_capture(monkeypatch: Any, tmp_path: Any) -> None:
     args = make_args(
         target="person@example.com",
         backup_dir=str(tmp_path),
         dest_dir=str(tmp_path / "dest"),
         dry_run=False,
-        no_status_check=True,
+        no_status=True,
     )
     monkeypatch.setattr(
         "antigravity_manager.cli.capture_tmux_status_text",

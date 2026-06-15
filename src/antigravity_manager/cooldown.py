@@ -55,10 +55,15 @@ def _models_from_status(status: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def evaluate_model(model: dict[str, Any], *, now: datetime) -> ModelCooldown:
+    if now.tzinfo is None:
+        now = now.astimezone()
+
     refresh_at = (
         parse_dt(str(model.get("refresh_at"))) if isinstance(model.get("refresh_at"), str) else None
     )
     is_available = bool(model.get("is_available"))
+    
+    # parse_dt now returns aware dt. Ensure both are aware.
     remaining_seconds = int((refresh_at - now).total_seconds()) if refresh_at else 0
     if is_available:
         remaining_seconds = 0
@@ -76,9 +81,21 @@ def find_decision_model(
 ) -> ModelCooldown | None:
     pattern = model_pattern.lower()
     matches = [model for model in models if pattern in model.name.lower()]
+    
+    # Fuzzy fallback for new layout
+    if not matches:
+        if "gemini" in pattern:
+            matches = [m for m in models if "gemini" in m.name.lower()]
+        elif "claude" in pattern:
+            matches = [m for m in models if "claude" in m.name.lower()]
+        elif "gpt" in pattern:
+            matches = [m for m in models if "gpt" in m.name.lower()]
+            
     if not matches:
         return None
-    high = [model for model in matches if "(high)" in model.name.lower()]
+        
+    # Prefer High/Pro tiers if multiple matches
+    high = [model for model in matches if any(x in model.name.lower() for x in ("(high)", "pro"))]
     return high[0] if high else matches[0]
 
 
@@ -90,6 +107,8 @@ def evaluate_metadata(
     decision_model: str = DEFAULT_DECISION_MODEL,
 ) -> CooldownStatus:
     current = now if now is not None else datetime.now().astimezone()
+    if current.tzinfo is None:
+        current = current.astimezone()
     status = metadata.get("status", {}) if isinstance(metadata.get("status"), dict) else {}
     last_checked_at = parse_dt(str(metadata.get("captured_at", ""))) or parse_dt(
         str(metadata.get("created_at", ""))
@@ -106,6 +125,13 @@ def evaluate_metadata(
         if refresh_times
         else parse_dt(str(metadata.get("next_available_at", "")))
     )
+    # Ensure next_available_at and current have same awareness
+    if next_available_at and (next_available_at.tzinfo is None) != (current.tzinfo is None):
+        if next_available_at.tzinfo is None:
+            next_available_at = next_available_at.astimezone()
+        else:
+            current = current.astimezone()
+
     remaining_seconds = (
         int((next_available_at - current).total_seconds()) if next_available_at else 0
     )
@@ -206,7 +232,7 @@ def format_model_usage(model: ModelCooldown) -> str:
     
     # Format components
     # model name: dim white, fixed width for alignment if possible, here using string padding
-    name_str = f"[dim white]{compact_model_name(model.name):<14}[/]"
+    name_str = f"[dim white]{compact_model_name(model.name):<8}[/]"
     # quota: fixed width (6), right aligned
     quota_str = f"[{color}]{quota_str:>{4}}[/]"
     
@@ -242,20 +268,27 @@ def color_for_model(model: ModelCooldown, text: str) -> str:
 
 def compact_model_name(name: str) -> str:
     replacements = {
-        "Gemini 3.5 Flash": "G3.5Flash",
-        "Gemini 3.1 Pro": "G3.1Pro",
-        "Claude Sonnet 4.6": "Son4.6",
-        "Claude Opus 4.6": "Opus4.6",
-        "GPT-OSS 120B": "GPT120B",
-        "(Thinking)": "Think",
-        "(Medium)": "Med",
-        "(High)": "",
-        "(Low)": "Low",
+        "GEMINI MODELS": "Gemini",
+        "CLAUDE AND GPT MODELS": "Claude",
     }
     compact = name
     for old, new in replacements.items():
-        compact = compact.replace(old, new)
-    return " ".join(compact.split())
+        if old in compact:
+            return new
+            
+    # Fallback for individual models if they aren't grouped yet
+    individual_replacements = {
+        "Gemini 3.5 Flash": "Gemini",
+        "Gemini 3.1 Pro": "Gemini",
+        "Claude Sonnet 4.6": "Claude",
+        "Claude Opus 4.6": "Claude",
+        "GPT-OSS 120B": "GPT",
+    }
+    for old, new in individual_replacements.items():
+        if old in compact:
+            return new
+
+    return compact.split("(")[0].strip()
 
 
 def compact_remaining(seconds: int) -> str:
@@ -265,12 +298,14 @@ def compact_remaining(seconds: int) -> str:
 def format_age(checked_at: datetime | None, *, now: datetime | None = None) -> str:
     if checked_at is None:
         return "-"
-    current = now if now is not None else datetime.now(checked_at.tzinfo).astimezone()
-    if (checked_at.tzinfo is None) != (current.tzinfo is None):
-        if checked_at.tzinfo is None:
-            checked_at = checked_at.astimezone()
-        else:
-            current = current.astimezone()
+    current = now if now is not None else datetime.now().astimezone()
+    
+    # Normalize awareness
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.astimezone()
+    if current.tzinfo is None:
+        current = current.astimezone()
+        
     seconds = max(0, int((current - checked_at).total_seconds()))
     if seconds < 60:
         return f"{seconds}s ago"
@@ -332,7 +367,6 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
     table.add_column("Account", style="bright_cyan")
     table.add_column("Status", justify="center")
     table.add_column("Usage")
-    table.add_column("Next Reset", justify="right", style="dim")
     table.add_column("Last Checked", justify="right", style="dim")
 
     for status in statuses:
@@ -347,13 +381,11 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
 
         display_models = group_models(status.models)
         usage = "\n".join(format_model_usage(model) for model in display_models) or "unknown"
-        next_available = format_remaining(status.remaining_seconds)
         last_checked = format_age(status.last_checked_at)
         table.add_row(
             status.email,
             status_text,
             usage,
-            next_available,
             last_checked,
         )
     console.print(

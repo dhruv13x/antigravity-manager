@@ -117,11 +117,11 @@ def test_format_model_usage():
     assert "100%" in format_model_usage(m1)
 
     m2 = ModelCooldown("Gemini 3.5 Flash", None, False, None, 60)
-    assert "G3.5F" in format_model_usage(m2)
+    assert "Gemini" in format_model_usage(m2)
     assert "1m" in format_model_usage(m2)
 
     m3 = ModelCooldown("Gemini 3.5 Flash", 20, False, None, 11940)  # 3 hours and 19 minutes
-    assert "G3.5F" in format_model_usage(m3)
+    assert "Gemini" in format_model_usage(m3)
     assert "20%" in format_model_usage(m3)
     assert "3h19m" in format_model_usage(m3).replace(" ", "")
 
