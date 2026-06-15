@@ -17,7 +17,7 @@ from antigravity_manager.ui import banner, print_rich_help
 
 def test_banner(capsys):
     banner()
-    assert "M  A  N  A  G  E  R" in capsys.readouterr().out
+    assert "Antigravity" in capsys.readouterr().out
 
 
 def test_print_rich_help(capsys):
