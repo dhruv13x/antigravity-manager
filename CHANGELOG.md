@@ -1,5 +1,12 @@
 # Changelog
 
+## [13.0.0] - 2026-06-15
+### Features
+- improve model status parsing and refine cooldown layout
+### Other Changes
+- update test_banner to match current banner content
+- update
+
 ## [12.0.0] - 2026-06-05
 ### Features
 - improve auto-backup visibility and harden status detection
