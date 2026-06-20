@@ -88,6 +88,8 @@ def save_status_metadata(status: LiveStatus, backup_dir: Path) -> Path:
 
 
 def status_state(status: LiveStatus) -> str:
+    if any(model.block_reason for model in status.models):
+        return "blocked"
     if any(model.is_available for model in status.models):
         return "ready"
     return "cooldown"
@@ -542,7 +544,8 @@ def handle_status(args: argparse.Namespace) -> None:
                         quota_percent_left=m.get("quota_percent_left"),
                         refresh_in_text=m.get("refresh_in_text"),
                         refresh_at=parse_dt(m.get("refresh_at")) if m.get("refresh_at") else None,
-                        is_available=m.get("is_available", False)
+                        is_available=m.get("is_available", False),
+                        block_reason=m.get("block_reason"),
                     )
                     for m in status_data.get("models", [])
                 ]

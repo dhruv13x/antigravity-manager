@@ -18,6 +18,7 @@ class ModelCooldown:
     is_available: bool
     refresh_at: datetime | None
     remaining_seconds: int
+    block_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,9 @@ def evaluate_model(model: dict[str, Any], *, now: datetime) -> ModelCooldown:
         parse_dt(str(model.get("refresh_at"))) if isinstance(model.get("refresh_at"), str) else None
     )
     is_available = bool(model.get("is_available"))
+    block_reason = model.get("block_reason")
+    if block_reason is not None:
+        block_reason = str(block_reason)
     
     # parse_dt now returns aware dt. Ensure both are aware.
     remaining_seconds = int((refresh_at - now).total_seconds()) if refresh_at else 0
@@ -73,6 +77,7 @@ def evaluate_model(model: dict[str, Any], *, now: datetime) -> ModelCooldown:
         is_available=is_available,
         refresh_at=refresh_at,
         remaining_seconds=max(0, remaining_seconds),
+        block_reason=block_reason,
     )
 
 
@@ -119,6 +124,7 @@ def evaluate_metadata(
     available_models = sum(1 for model in model_statuses if model.is_available)
     total_models = len(model_statuses)
     decision_model_status = find_decision_model(model_statuses, decision_model)
+    has_blocked_model = any(model.block_reason for model in model_statuses)
     refresh_times = [model.refresh_at for model in model_statuses if model.refresh_at is not None]
     next_available_at = (
         min(refresh_times)
@@ -136,15 +142,20 @@ def evaluate_metadata(
         int((next_available_at - current).total_seconds()) if next_available_at else 0
     )
     if decision_model_status is not None:
-        account_status = (
-            "ready"
-            if decision_model_status.is_available or decision_model_status.remaining_seconds <= 0
-            else "cooldown"
-        )
+        if decision_model_status.block_reason:
+            account_status = "blocked"
+        else:
+            account_status = (
+                "ready"
+                if decision_model_status.is_available or decision_model_status.remaining_seconds <= 0
+                else "cooldown"
+            )
         remaining_seconds = decision_model_status.remaining_seconds
         next_available_at = (
             current if account_status == "ready" else decision_model_status.refresh_at
         )
+    elif has_blocked_model:
+        account_status = "blocked"
     else:
         account_status = "ready" if available_models > 0 or remaining_seconds <= 0 else "cooldown"
     if account_status == "ready":
@@ -201,10 +212,11 @@ def evaluate_entries(
             continue
         latest[email] = status
 
+    status_priority = {"ready": 0, "cooldown": 1, "blocked": 2}
     return sorted(
         latest.values(),
         key=lambda item: (
-            item.status != "ready",
+            status_priority.get(item.status, 3),
             item.remaining_seconds,
             item.last_checked_at.timestamp() if item.last_checked_at else float("inf"),
             item.email,
@@ -247,6 +259,8 @@ def format_model_usage(model: ModelCooldown) -> str:
             state = f"[dim]Ready ({compact_remaining(rem_sec)})[/]"
         else:
             state = "[success]Ready[/]"
+    elif model.block_reason:
+        state = "[bold red]Blocked[/]"
     else:
         state = f"[dim]{compact_remaining(model.remaining_seconds)}[/]"
         
@@ -372,7 +386,9 @@ def print_statuses_table(statuses: list[CooldownStatus]) -> None:
     for status in statuses:
         if status.email == "unknown":
             continue
-        if status.email == active_email:
+        if status.status == "blocked":
+            status_text = "[bold red]BLOCKED[/]"
+        elif status.email == active_email:
             status_text = "[bold bright_blue]ACTIVE[/]"
         elif status.status == "ready":
             status_text = "[bold bright_green]READY[/]"

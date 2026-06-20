@@ -33,6 +33,10 @@ QUOTA_EXHAUSTED_RE = re.compile(
     r"(?:quota will reset after|Resets in)\s+(?P<duration>(?:(?P<hours>\d+)h)?\s*(?:(?P<minutes>\d+)m)?\s*(?:(?P<seconds>\d+)s)?)(?:\.|$)",
     re.IGNORECASE,
 )
+LICENSE_BLOCKED_RE = re.compile(
+    r"(?:do not have a valid license|valid license of this product|contact your administrator|#3501)",
+    re.IGNORECASE,
+)
 ELIGIBILITY_RE = re.compile(r"Eligibility check failed|verify your account", re.IGNORECASE)
 MODEL_NAME_RE = re.compile(r"^(?![│└>])(?=.*[A-Za-z]).+$")
 ACTIVE_MODEL_RE = re.compile(
@@ -56,6 +60,7 @@ class ModelQuotaStatus:
     refresh_in_text: str | None
     refresh_at: datetime | None
     is_available: bool
+    block_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -202,7 +207,7 @@ def probe_quota_via_message(pane_id: str, *, timeout_seconds: float = 10.0) -> s
     # to avoid premature exit due to the prompt that triggered the command.
     while time.time() - start < 5.0:
         output = capture_pane(pane_id)
-        if any(k in output.lower() for k in ("quota will reset after", "resets in")):
+        if any(k in output.lower() for k in ("quota will reset after", "resets in")) or LICENSE_BLOCKED_RE.search(output):
             time.sleep(0.5)
             return capture_pane(pane_id)
         time.sleep(0.5)
@@ -210,7 +215,11 @@ def probe_quota_via_message(pane_id: str, *, timeout_seconds: float = 10.0) -> s
     # Then fall back to waiting for ANY prompt or the warning
     while time.time() - start < timeout_seconds:
         output = capture_pane(pane_id)
-        if any(k in output.lower() for k in ("quota will reset after", "resets in")) or PROMPT_RE.search(output):
+        if (
+            any(k in output.lower() for k in ("quota will reset after", "resets in"))
+            or LICENSE_BLOCKED_RE.search(output)
+            or PROMPT_RE.search(output)
+        ):
             time.sleep(0.5)
             return capture_pane(pane_id)
         time.sleep(0.5)
@@ -374,6 +383,9 @@ def parse_model_blocks(text: str, *, now: datetime) -> tuple[ModelQuotaStatus, .
     # Check for PROBE data first
     probe_refresh_at = None
     probe_refresh_text = None
+    block_reason = None
+    if LICENSE_BLOCKED_RE.search(clean_text):
+        block_reason = "No valid Antigravity license"
     if "===== PROBE =====" in clean_text:
         probe_match = QUOTA_EXHAUSTED_RE.search(clean_text)
         if probe_match:
@@ -396,6 +408,7 @@ def parse_model_blocks(text: str, *, now: datetime) -> tuple[ModelQuotaStatus, .
         quota_percent = None
         refresh_text = None
         refresh_at = None
+        model_block_reason = None
 
         # Look ahead for more info
         j = i + 1
@@ -428,24 +441,31 @@ def parse_model_blocks(text: str, *, now: datetime) -> tuple[ModelQuotaStatus, .
                 break
 
         # Apply PROBE info to likely model if no data found
-        if not found_data and probe_refresh_at:
+        if not found_data and (probe_refresh_at or block_reason):
             # Only apply probe data to models that likely match the probe (e.g. Gemini/Claude)
             if any(x in model_name.upper() for x in ("GEMINI", "CLAUDE", "GPT")):
-                quota_percent = 0.0
-                refresh_at = probe_refresh_at
-                refresh_text = probe_refresh_text
+                if block_reason:
+                    quota_percent = None
+                    refresh_at = None
+                    refresh_text = "Blocked: no valid license"
+                    model_block_reason = block_reason
+                else:
+                    quota_percent = 0.0
+                    refresh_at = probe_refresh_at
+                    refresh_text = probe_refresh_text
                 found_data = True
 
-        if found_data and quota_percent is not None:
+        if found_data and (quota_percent is not None or model_block_reason):
             name = format_model_group_name(model_name)
             if name:
                 models.append(
                     ModelQuotaStatus(
                         model_name=name,
-                        quota_percent_left=int(quota_percent),
+                        quota_percent_left=int(quota_percent) if quota_percent is not None else None,
                         refresh_in_text=refresh_text,
                         refresh_at=refresh_at or parse_refresh_at(refresh_text, now=now),
-                        is_available=quota_percent > 0 and refresh_text is None,
+                        is_available=quota_percent is not None and quota_percent > 0 and refresh_text is None,
+                        block_reason=model_block_reason,
                     )
                 )
             i = j
@@ -466,12 +486,23 @@ def parse_model_blocks(text: str, *, now: datetime) -> tuple[ModelQuotaStatus, .
             # If we already have a model in this group with quota information from /usage, 
             # we don't need the fallback.
             group_prefix = formatted_name.split(" (")[0]
-            if any(item.model_name.startswith(group_prefix) and item.quota_percent_left is not None for item in models):
+            if any(item.model_name.startswith(group_prefix) and item.quota_percent_left is not None and not block_reason for item in models):
                 continue
                 
             # If not in list, add it
             if not any(item.model_name == formatted_name for item in models):
-                if probe_refresh_at:
+                if block_reason:
+                    models.append(
+                        ModelQuotaStatus(
+                            model_name=formatted_name,
+                            quota_percent_left=None,
+                            refresh_in_text="Blocked: no valid license",
+                            refresh_at=None,
+                            is_available=False,
+                            block_reason=block_reason,
+                        )
+                    )
+                elif probe_refresh_at:
                     # Confirmed Cooldown via Probe
                     models.append(
                         ModelQuotaStatus(
@@ -493,6 +524,31 @@ def parse_model_blocks(text: str, *, now: datetime) -> tuple[ModelQuotaStatus, .
                             is_available=True,
                         )
                     )
+
+    if block_reason and not models:
+        models.append(
+            ModelQuotaStatus(
+                model_name="Antigravity account",
+                quota_percent_left=None,
+                refresh_in_text="Blocked: no valid license",
+                refresh_at=None,
+                is_available=False,
+                block_reason=block_reason,
+            )
+        )
+
+    if block_reason:
+        models = [
+            ModelQuotaStatus(
+                model_name=m.model_name,
+                quota_percent_left=None,
+                refresh_in_text="Blocked: no valid license",
+                refresh_at=None,
+                is_available=False,
+                block_reason=block_reason,
+            )
+            for m in models
+        ]
 
     # Final Deduplication by name (preserving order)
     seen_names = set()
@@ -551,7 +607,10 @@ def live_status_to_text(status: LiveStatus) -> RenderableType:
 
     for model in status.models:
         quota_text = f"{model.quota_percent_left}%" if model.quota_percent_left is not None else "??%"
-        state_text = "[bold bright_green]Ready[/]" if model.is_available else "[bold bright_yellow]Cooldown[/]"
+        if model.block_reason:
+            state_text = "[bold red]Blocked[/]"
+        else:
+            state_text = "[bold bright_green]Ready[/]" if model.is_available else "[bold bright_yellow]Cooldown[/]"
         
         if model.quota_percent_left is not None:
             if model.quota_percent_left >= 75:

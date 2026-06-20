@@ -97,7 +97,8 @@ def fallback_status(email: str | None) -> LiveStatus:
                         quota_percent_left=m.get("quota_percent_left"),
                         refresh_in_text=m.get("refresh_in_text"),
                         refresh_at=refresh_at,
-                        is_available=m.get("is_available", False)
+                        is_available=m.get("is_available", False),
+                        block_reason=m.get("block_reason"),
                     ))
                 
                 if models:

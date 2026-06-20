@@ -40,5 +40,54 @@ esc to cancel                                           Gemini 3.5 Flash (High) 
     assert "GEMINI MODELS" in status.models[0].model_name
     assert "Gemini 3.5 Flash (High)" in status.models[0].model_name
 
+
+def test_parse_probe_license_failure_blocks_account():
+    stuck_output = """
+===== STARTUP =====
+Account: drdpsbose030@gmail.com
+▄▀▀▄        Antigravity CLI 1.0.10
+     ▀▀▀▀▀▀       drdpsbose030@gmail.com
+    ▀▀▀▀▀▀▀▀      Claude Sonnet 4.6 (Thinking)
+> 
+===== USAGE =====
+USAGE TIMEOUT
+===== PROBE =====
+> hi
+⚠ You do not have a valid license of this product. Please contact your administrator to request a
+license. If you are not an enterprise user and believe you are receiving this message as an error,
+please try using the latest version and logging in again. (#3501)
+"""
+    now = datetime(2026, 6, 19, 12, 0, 0, tzinfo=timezone.utc)
+    status = parse_live_status_text(stuck_output, now=now)
+
+    assert len(status.models) == 1
+    assert "CLAUDE AND GPT MODELS" in status.models[0].model_name
+    assert status.models[0].quota_percent_left is None
+    assert status.models[0].is_available is False
+    assert status.models[0].block_reason == "No valid Antigravity license"
+    assert status.models[0].refresh_in_text == "Blocked: no valid license"
+
+
+def test_license_failure_overrides_stale_usage_quota():
+    output = """
+===== STARTUP =====
+Account: drdpsbose030@gmail.com
+Claude Sonnet 4.6 (Thinking)
+===== USAGE =====
+Models & Quota
+Claude Sonnet 4.6 (Thinking)
+████████████████████ 100%
+Quota available
+===== PROBE =====
+> hi
+⚠ You do not have a valid license of this product. (#3501)
+"""
+    status = parse_live_status_text(output, now=datetime(2026, 6, 19, 12, 0, 0, tzinfo=timezone.utc))
+
+    assert len(status.models) == 1
+    assert status.models[0].quota_percent_left is None
+    assert status.models[0].is_available is False
+    assert status.models[0].block_reason == "No valid Antigravity license"
+
 if __name__ == "__main__":
     test_parse_probe_fallback()

@@ -111,6 +111,66 @@ def test_evaluate_entries_prefers_latest_status_metadata(monkeypatch):
     assert statuses[0].status == "ready"
 
 
+def test_blocked_metadata_is_not_ready_and_sorts_after_cooldown(monkeypatch):
+    monkeypatch.setattr("antigravity_manager.cooldown.load_registry", lambda: {})
+    blocked = BackupEntry(
+        Path("blocked.metadata.json"),
+        "blocked@example.com",
+        "standard",
+        "2024-01-01T10:00:00+00:00",
+        "2024-01-01T10:00:00+00:00",
+        "2024-01-01T10:00:00+00:00",
+        "status-only",
+        {
+            "email": "blocked@example.com",
+            "captured_at": "2024-01-01T10:00:00+00:00",
+            "status": {
+                "models": [
+                    {
+                        "model_name": "CLAUDE AND GPT MODELS (Claude Sonnet 4.6 (Thinking))",
+                        "quota_percent_left": None,
+                        "is_available": False,
+                        "block_reason": "No valid Antigravity license",
+                    }
+                ]
+            },
+        },
+    )
+    cooldown = BackupEntry(
+        Path("cooldown.metadata.json"),
+        "cooldown@example.com",
+        "standard",
+        "2024-01-01T10:00:00+00:00",
+        "2024-01-01T10:00:00+00:00",
+        "2024-01-01T11:00:00+00:00",
+        "status-only",
+        {
+            "email": "cooldown@example.com",
+            "captured_at": "2024-01-01T10:00:00+00:00",
+            "status": {
+                "models": [
+                    {
+                        "model_name": "gemini 3.5 flash",
+                        "is_available": False,
+                        "refresh_at": "2024-01-01T11:00:00+00:00",
+                    }
+                ]
+            },
+        },
+    )
+
+    statuses = evaluate_entries(
+        [blocked, cooldown],
+        now=datetime(2024, 1, 1, 10, tzinfo=UTC),
+        decision_model="claude",
+    )
+
+    assert statuses[0].email == "cooldown@example.com"
+    assert statuses[0].status == "cooldown"
+    assert statuses[1].email == "blocked@example.com"
+    assert statuses[1].status == "blocked"
+
+
 def test_format_model_usage():
     m1 = ModelCooldown("a", 100, True, None, 0)
     assert "Ready" in format_model_usage(m1)
@@ -155,4 +215,3 @@ def test_evaluate_entries_sorting_by_last_checked(monkeypatch):
     assert len(statuses) == 2
     assert statuses[0].email == "older@example.com"
     assert statuses[1].email == "newer@example.com"
-
