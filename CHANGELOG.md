@@ -1,5 +1,7 @@
 # Changelog
 
+## [14.0.0] - 2026-06-20
+
 ## [13.0.0] - 2026-06-15
 ### Features
 - improve model status parsing and refine cooldown layout
