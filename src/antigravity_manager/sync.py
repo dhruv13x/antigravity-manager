@@ -436,19 +436,13 @@ def sync_auto(
         console_stderr.print("[bold red]Missing B2 credentials (KEY_ID or APP_KEY).[/]")
         return
 
-    console.print("[cyan]Step 1: Deduplicating and upgrading local backups to the 'latest' standard...[/cyan]")
-    deduplicate_and_upgrade_local(backup_dir, dry_run=dry_run)
-
     try:
         bucket = _get_b2_bucket(access_key, secret_key, bucket_name)
     except Exception as e:
         console_stderr.print(f"[bold red]Failed to connect to B2 bucket {bucket_name}: {e}[/]")
         return
 
-    console.print("[cyan]Step 2: Cleaning cloud legacy duplicates from B2...[/cyan]")
-    deduplicate_cloud(bucket, dry_run=dry_run)
-
-    console.print("[cyan]Step 3: Pulling missing latest backups from cloud...[/cyan]")
+    console.print("[cyan]Step 1: Pulling missing backups from cloud...[/cyan]")
     pull_backup(
         backup_dir=backup_dir,
         bucket_name=bucket_name,
@@ -457,6 +451,12 @@ def sync_auto(
         secret_key=secret_key,
         dry_run=dry_run,
     )
+
+    console.print("[cyan]Step 2: Deduplicating and upgrading local backups to the 'latest' standard...[/cyan]")
+    deduplicate_and_upgrade_local(backup_dir, dry_run=dry_run)
+
+    console.print("[cyan]Step 3: Cleaning cloud legacy duplicates from B2...[/cyan]")
+    deduplicate_cloud(bucket, dry_run=dry_run)
 
     console.print("[cyan]Step 4: Pushing missing local latest backups to cloud...[/cyan]")
     push_backup(
