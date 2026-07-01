@@ -13,6 +13,7 @@ from .config import (
     ANTIGRAVITY_AUTH_FILES,
     SAFETY_BACKUP_DIR,
 )
+from .backup import read_token_fingerprint_from_archive
 from .list_backups import list_backups, load_metadata_for_archive
 from .ui import RenderableType
 from .utils import read_active_email, safe_label
@@ -226,6 +227,19 @@ def restore_full(extracted_dir: Path, antigravity_home: Path, *, dry_run: bool, 
 def perform_restore(args: Any) -> tuple[Path, dict[str, Any], list[Path], Path | None]:
     archive_path = resolve_archive_path(args)
     metadata = load_metadata_for_archive(archive_path)
+    metadata_fingerprint = metadata.get("token_fingerprint")
+    archive_fingerprint = read_token_fingerprint_from_archive(archive_path)
+    if (
+        isinstance(metadata_fingerprint, str)
+        and metadata_fingerprint
+        and archive_fingerprint
+        and metadata_fingerprint != archive_fingerprint
+    ):
+        raise ValueError(
+            "Backup archive is internally inconsistent: metadata token fingerprint "
+            f"{metadata_fingerprint} does not match archive token fingerprint "
+            f"{archive_fingerprint}."
+        )
     antigravity_home = Path(args.dest_dir).expanduser()
 
     with tempfile.TemporaryDirectory(prefix="agm-restore-") as temp_dir_str:

@@ -8,7 +8,12 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
-from .backup import backup_result_to_text, perform_backup
+from .backup import (
+    backup_result_to_text,
+    perform_backup,
+    read_token_fingerprint_from_archive,
+    read_token_fingerprint_from_path,
+)
 from .config import (
     ACTIVE_ACCOUNT_PATH,
     ANTIGRAVITY_HOME,
@@ -28,7 +33,7 @@ from .prune import perform_prune, prune_result_to_text
 from .purge import perform_purge, purge_result_to_text
 from .registry import update_registry_from_status
 from .remove import perform_remove, remove_result_to_text
-from .restore import perform_restore, restore_result_to_text
+from .restore import perform_restore, resolve_archive_path, restore_result_to_text
 from .status import (
     AntigravityStatusError,
     LiveStatus,
@@ -608,6 +613,47 @@ def _auto_backup_before_switch(args: argparse.Namespace, status: LiveStatus | No
         )
 
 
+def _current_token_fingerprint(args: argparse.Namespace) -> str | None:
+    state_dir = getattr(args, "dest_dir", None) or getattr(args, "source_dir", None) or ANTIGRAVITY_HOME
+    return read_token_fingerprint_from_path(
+        Path(state_dir).expanduser() / "antigravity-oauth-token"
+    )
+
+
+def _validate_restore_target(args: argparse.Namespace, archive_path: Path) -> None:
+    if getattr(args, "dry_run", False):
+        return
+
+    current_fp = _current_token_fingerprint(args)
+    archive_fp = read_token_fingerprint_from_archive(archive_path)
+    if current_fp and archive_fp and current_fp == archive_fp:
+        raise AntigravityStatusError(
+            "Restore would have no effect. "
+            f"The target archive already has the active OAuth credential "
+            f"(token fingerprint: {archive_fp}). Choose a different account backup."
+        )
+
+
+def _validate_restored_account(args: argparse.Namespace, expected_email: str) -> LiveStatus | None:
+    if getattr(args, "dry_run", False) or getattr(args, "no_status", False):
+        return None
+
+    status = capture_and_save_current_status(args)
+    if status is None:
+        return None
+
+    if expected_email == "unknown" or status.email == expected_email:
+        return status
+
+    save_active_account(status.email, dry_run=getattr(args, "dry_run", False))
+
+    raise AntigravityStatusError(
+        "Restored account verification failed. "
+        f"Backup metadata says '{expected_email}', but live Antigravity authenticated as "
+        f"'{status.email}'. The archive credential does not belong to the labeled email."
+    )
+
+
 def handle_restore(args: argparse.Namespace) -> None:
     if getattr(args, "auth_only", False) and getattr(args, "full", None):
         raise ValueError("Use either --auth-only or --full, not both.")
@@ -619,10 +665,18 @@ def handle_restore(args: argparse.Namespace) -> None:
     else:
         status = capture_and_save_current_status(args)
 
+    archive_path = resolve_archive_path(args)
+    _validate_restore_target(args, archive_path)
+
     _auto_backup_before_switch(args, status)
 
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
-    save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
+    restored_email = str(metadata.get("email", "unknown"))
+    verified_status = _validate_restored_account(args, restored_email)
+    save_active_account(
+        verified_status.email if verified_status is not None else restored_email,
+        dry_run=args.dry_run,
+    )
     console.print(
         restore_result_to_text(
             archive_path,
@@ -702,6 +756,27 @@ def handle_recommend(args: argparse.Namespace) -> None:
         *list_status_metadata(backup_dir, latest_per_email=True),
     ]
     statuses = evaluate_entries(entries, decision_model=args.decision_model)
+    if args.use or args.restore:
+        current_fp = _current_token_fingerprint(args)
+        if current_fp:
+            filtered_statuses = []
+            for status in statuses:
+                try:
+                    candidate_archive = resolve_archive_path(
+                        argparse.Namespace(
+                            backup_dir=args.backup_dir,
+                            target=status.email,
+                            from_archive=None,
+                            email=None,
+                        )
+                    )
+                    candidate_fp = read_token_fingerprint_from_archive(candidate_archive)
+                except Exception:
+                    candidate_fp = None
+                if candidate_fp and candidate_fp == current_fp:
+                    continue
+                filtered_statuses.append(status)
+            statuses = filtered_statuses
     if not statuses:
         raise FileNotFoundError("No account status or backup metadata found.")
     selected = statuses[0]
@@ -756,10 +831,18 @@ def handle_use(args: argparse.Namespace) -> None:
     else:
         status = capture_and_save_current_status(args)
 
+    archive_path = resolve_archive_path(args)
+    _validate_restore_target(args, archive_path)
+
     _auto_backup_before_switch(args, status)
 
     archive_path, metadata, restored_files, safety_path = perform_restore(args)
-    save_active_account(str(metadata.get("email", "unknown")), dry_run=args.dry_run)
+    restored_email = str(metadata.get("email", "unknown"))
+    verified_status = _validate_restored_account(args, restored_email)
+    save_active_account(
+        verified_status.email if verified_status is not None else restored_email,
+        dry_run=args.dry_run,
+    )
     console.print(
         restore_result_to_text(
             archive_path,
@@ -951,7 +1034,7 @@ def main() -> None:
     }
     try:
         handlers[args.command](args)
-    except (FileNotFoundError, FileExistsError, ValueError, RuntimeError) as exc:
+    except (FileNotFoundError, FileExistsError, ValueError, RuntimeError, AntigravityStatusError) as exc:
         error_console.print(f"[bold red]Error:[/bold red] {exc}")
         sys.exit(1)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tarfile
 import tempfile
@@ -18,6 +19,42 @@ from .ui import RenderableType
 from .utils import build_archive_name, isoformat_local, read_active_email
 
 ESTIMATED_MODEL_RESET_HOURS = 5
+
+# Salt is not secret (no HMAC secret needed here). We just want a stable,
+# non-reversible fingerprint of the refresh_token so we can detect when two
+# archives (or the live credential) share the same underlying Google account.
+_TOKEN_FINGERPRINT_SALT = b"agm-token-fingerprint-v1"
+
+
+def _compute_token_fingerprint(refresh_token: str) -> str:
+    """Return a stable hex fingerprint of a refresh_token."""
+    h = hashlib.sha256(_TOKEN_FINGERPRINT_SALT + refresh_token.encode())
+    return h.hexdigest()[:16]
+
+
+def read_token_fingerprint_from_path(token_path: Path) -> str | None:
+    """Read the antigravity-oauth-token file and return its fingerprint, or None."""
+    try:
+        data = json.loads(token_path.read_bytes())
+        rt = data.get("token", {}).get("refresh_token", "")
+        return _compute_token_fingerprint(rt) if rt else None
+    except Exception:
+        return None
+
+
+def read_token_fingerprint_from_archive(archive_path: Path) -> str | None:
+    """Extract antigravity-oauth-token from a .tar.gz archive and return its fingerprint."""
+    try:
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member = tar.getmember("antigravity-cli/antigravity-oauth-token")
+            f = tar.extractfile(member)
+            if f is None:
+                return None
+            data = json.load(f)
+            rt = data.get("token", {}).get("refresh_token", "")
+            return _compute_token_fingerprint(rt) if rt else None
+    except Exception:
+        return None
 
 
 def find_decision_model(
@@ -170,6 +207,11 @@ def build_backup_metadata(
         if refreshes:
             next_available_at_dt = max(refreshes)
 
+    # Compute a fingerprint of the token on disk so we can detect later if two
+    # archives share the same underlying credential (same Google account).
+    token_path = source_antigravity_home / "antigravity-oauth-token"
+    token_fingerprint = read_token_fingerprint_from_path(token_path)
+
     return {
         "schema_version": 1,
         "product": "antigravity",
@@ -188,6 +230,7 @@ def build_backup_metadata(
         "backup_mode": backup_mode,
         "include_bin": include_bin,
         "include_logs": include_logs,
+        "token_fingerprint": token_fingerprint,
         "status": status_to_dict(status),
     }
 

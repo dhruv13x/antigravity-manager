@@ -402,6 +402,59 @@ def test_perform_full_restore_creates_one_safety_archive(
     assert safety_path is None
 
 
+def test_perform_restore_rejects_metadata_token_fingerprint_mismatch(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import pytest
+
+    backup_dir = tmp_path / "backups"
+    dest = tmp_path / "dest"
+    backup_dir.mkdir()
+    dest.mkdir()
+    archive_path = backup_dir / "person@example.com-latest-antigravity.tar.gz"
+
+    with tarfile.open(archive_path, "w:gz") as tar:
+        token = tmp_path / "antigravity-oauth-token"
+        token.write_text(
+            json.dumps({"token": {"refresh_token": "archive-token"}}),
+            encoding="utf-8",
+        )
+        tar.add(token, arcname="antigravity-cli/antigravity-oauth-token")
+
+    archive_path.with_name(archive_path.name.replace(".tar.gz", ".metadata.json")).write_text(
+        json.dumps(
+            {
+                "product": "antigravity",
+                "email": "person@example.com",
+                "plan": "Standard",
+                "created_at": "2026-05-26T14:51:04+05:30",
+                "captured_at": "2026-05-26T14:51:04+05:30",
+                "next_available_at": "2026-05-26T14:51:04+05:30",
+                "backup_mode": "full",
+                "token_fingerprint": "wrong-fingerprint",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("antigravity_manager.restore.SAFETY_BACKUP_DIR", tmp_path / "safety")
+
+    with pytest.raises(ValueError, match="internally inconsistent"):
+        perform_restore(
+            make_args(
+                target=archive_path.name,
+                from_archive=None,
+                email=None,
+                backup_dir=str(backup_dir),
+                dest_dir=str(dest),
+                full=True,
+                force=False,
+                dry_run=False,
+            )
+        )
+
+    assert not (dest / "antigravity-oauth-token").exists()
+
+
 def test_backup_filters_sqlite_wal_files(tmp_path: Path, monkeypatch: Any) -> None:
     source = tmp_path / "antigravity-cli"
     backup_dir = tmp_path / "backups"

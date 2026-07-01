@@ -339,12 +339,12 @@ def group_models(models: tuple[ModelCooldown, ...]) -> list[ModelCooldown]:
         return []
 
     # Map state key to list of models
-    key_map: dict[tuple[int | None, int], list[ModelCooldown]] = {}
+    key_map: dict[tuple[str, int | None, int], list[ModelCooldown]] = {}
     # Track order of first appearance
-    ordered_keys: list[tuple[int | None, int]] = []
+    ordered_keys: list[tuple[str, int | None, int]] = []
 
     for m in models:
-        key = (m.quota_percent_left, m.remaining_seconds)
+        key = (compact_model_name(m.name), m.quota_percent_left, m.remaining_seconds)
         if key not in key_map:
             key_map[key] = []
             ordered_keys.append(key)

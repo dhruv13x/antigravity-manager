@@ -6,6 +6,8 @@ from typing import Any
 
 from antigravity_manager.cli import (
     build_parser,
+    handle_recommend,
+    handle_restore,
     handle_status,
     handle_use,
     save_status_metadata,
@@ -200,6 +202,7 @@ def test_handle_use_bypasses_status_check_if_no_token(monkeypatch: Any, tmp_path
         return (tmp_path / "a.tar.gz", {"email": "person@example.com"}, [], None)
 
     monkeypatch.setattr("antigravity_manager.cli.perform_restore", fake_restore)
+    monkeypatch.setattr("antigravity_manager.cli.resolve_archive_path", lambda _: tmp_path / "a.tar.gz")
     monkeypatch.setattr("antigravity_manager.cli.save_active_account", lambda *a, **kw: None)
 
     handle_use(args)
@@ -223,8 +226,193 @@ def test_handle_use_no_status_skips_capture(monkeypatch: Any, tmp_path: Any) -> 
         "antigravity_manager.cli.perform_restore",
         lambda _: (tmp_path / "a.tar.gz", {"email": "person@example.com"}, [], None),
     )
+    monkeypatch.setattr("antigravity_manager.cli.resolve_archive_path", lambda _: tmp_path / "a.tar.gz")
     monkeypatch.setattr("antigravity_manager.cli.save_active_account", lambda *a, **kw: None)
     handle_use(args)
+
+
+def test_handle_use_rejects_restored_account_mismatch(monkeypatch: Any, tmp_path: Any) -> None:
+    import pytest
+
+    args = make_args(
+        target="expected@example.com",
+        backup_dir=str(tmp_path),
+        dest_dir=str(tmp_path / "dest"),
+        dry_run=False,
+        no_status=False,
+        pre_captured_status=None,
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.perform_restore",
+        lambda _: (tmp_path / "a.tar.gz", {"email": "expected@example.com"}, [], None),
+    )
+    monkeypatch.setattr("antigravity_manager.cli.resolve_archive_path", lambda _: tmp_path / "a.tar.gz")
+    live_status = LiveStatus(
+        email="actual@example.com",
+        plan="Standard",
+        is_pro=False,
+        captured_at=datetime.now().astimezone(),
+        models=(),
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.capture_and_save_current_status",
+        lambda _: live_status,
+    )
+    # The archive differs from the pre-restore credential, so the restore is not a no-op.
+    monkeypatch.setattr("antigravity_manager.cli.read_token_fingerprint_from_path", lambda _: "aaa111")
+    monkeypatch.setattr("antigravity_manager.cli.read_token_fingerprint_from_archive", lambda _: "bbb222")
+    saved: list[str] = []
+    monkeypatch.setattr(
+        "antigravity_manager.cli.save_active_account",
+        lambda email, **_: saved.append(email),
+    )
+
+    with pytest.raises(AntigravityStatusError, match="metadata says 'expected@example.com'"):
+        handle_use(args)
+
+    assert saved == ["actual@example.com"]
+
+
+def test_handle_use_rejects_same_credential_before_restore(monkeypatch: Any, tmp_path: Any) -> None:
+    """When archive and live session share the same OAuth token, restoring is a no-op."""
+    import pytest
+
+    args = make_args(
+        target="alias@example.com",
+        backup_dir=str(tmp_path),
+        dest_dir=str(tmp_path / "dest"),
+        dry_run=False,
+        no_status=False,
+        pre_captured_status=None,
+    )
+    restore_called = False
+    def fake_restore(_: Any) -> tuple[Path, dict, list, None]:
+        nonlocal restore_called
+        restore_called = True
+        return (tmp_path / "a.tar.gz", {"email": "alias@example.com"}, [], None)
+
+    monkeypatch.setattr("antigravity_manager.cli.perform_restore", fake_restore)
+    monkeypatch.setattr("antigravity_manager.cli.resolve_archive_path", lambda _: tmp_path / "a.tar.gz")
+    live_status = LiveStatus(
+        email="primary@example.com",
+        plan="Standard",
+        is_pro=False,
+        captured_at=datetime.now().astimezone(),
+        models=(),
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.capture_and_save_current_status",
+        lambda _: live_status,
+    )
+    # Same fingerprint before restore means the target archive is already active.
+    monkeypatch.setattr("antigravity_manager.cli.read_token_fingerprint_from_path", lambda _: "same1234")
+    monkeypatch.setattr("antigravity_manager.cli.read_token_fingerprint_from_archive", lambda _: "same1234")
+
+    with pytest.raises(AntigravityStatusError, match="would have no effect"):
+        handle_use(args)
+
+    assert restore_called is False
+
+
+def test_handle_restore_saves_verified_restored_account(monkeypatch: Any, tmp_path: Any) -> None:
+    args = make_args(
+        target="expected@example.com",
+        backup_dir=str(tmp_path),
+        dest_dir=str(tmp_path / "dest"),
+        dry_run=False,
+        no_status=False,
+        auth_only=False,
+        full=True,
+        force=False,
+        pre_captured_status=None,
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.perform_restore",
+        lambda _: (tmp_path / "a.tar.gz", {"email": "expected@example.com"}, [], None),
+    )
+    monkeypatch.setattr("antigravity_manager.cli.resolve_archive_path", lambda _: tmp_path / "a.tar.gz")
+    live_status = LiveStatus(
+        email="expected@example.com",
+        plan="Standard",
+        is_pro=False,
+        captured_at=datetime.now().astimezone(),
+        models=(),
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.capture_and_save_current_status",
+        lambda _: live_status,
+    )
+    monkeypatch.setattr("antigravity_manager.cli.read_token_fingerprint_from_path", lambda _: "aaa111")
+    monkeypatch.setattr("antigravity_manager.cli.read_token_fingerprint_from_archive", lambda _: "bbb222")
+    monkeypatch.setattr("antigravity_manager.cli.pull_cloud_backup_if_requested", lambda _: None)
+    saved: list[str] = []
+    monkeypatch.setattr(
+        "antigravity_manager.cli.save_active_account",
+        lambda email, **_: saved.append(email),
+    )
+
+    handle_restore(args)
+
+    assert saved == ["expected@example.com"]
+
+
+def test_handle_recommend_restore_skips_current_credential(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    args = make_args(
+        use=False,
+        restore=True,
+        json=False,
+        backup_dir=str(tmp_path),
+        dest_dir=str(tmp_path / "dest"),
+        dry_run=False,
+        no_status=True,
+        cloud=False,
+        decision_model="Gemini",
+    )
+    statuses = [
+        argparse.Namespace(
+            email="current@example.com",
+            status="ready",
+            decision_model="Gemini",
+            decision_model_status=argparse.Namespace(is_available=True),
+            remaining_seconds=0,
+            available_models=1,
+            total_models=1,
+            source="backup",
+        ),
+        argparse.Namespace(
+            email="next@example.com",
+            status="ready",
+            decision_model="Gemini",
+            decision_model_status=argparse.Namespace(is_available=True),
+            remaining_seconds=0,
+            available_models=1,
+            total_models=1,
+            source="backup",
+        ),
+    ]
+    monkeypatch.setattr("antigravity_manager.cli.list_backups", lambda *a, **k: [])
+    monkeypatch.setattr("antigravity_manager.cli.list_status_metadata", lambda *a, **k: [])
+    monkeypatch.setattr("antigravity_manager.cli.evaluate_entries", lambda *a, **k: statuses)
+    monkeypatch.setattr("antigravity_manager.cli._current_token_fingerprint", lambda _: "same")
+    monkeypatch.setattr(
+        "antigravity_manager.cli.resolve_archive_path",
+        lambda candidate_args: tmp_path / f"{candidate_args.target}.tar.gz",
+    )
+    monkeypatch.setattr(
+        "antigravity_manager.cli.read_token_fingerprint_from_archive",
+        lambda path: "same" if "current@example.com" in str(path) else "different",
+    )
+    selected: list[str] = []
+    monkeypatch.setattr(
+        "antigravity_manager.cli.handle_restore",
+        lambda restore_args: selected.append(restore_args.target),
+    )
+
+    handle_recommend(args)
+
+    assert selected == ["next@example.com"]
 
 
 def test_status_metadata_timestamp_prefers_gemini_flash_high() -> None:

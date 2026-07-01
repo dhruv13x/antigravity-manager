@@ -215,3 +215,15 @@ def test_evaluate_entries_sorting_by_last_checked(monkeypatch):
     assert len(statuses) == 2
     assert statuses[0].email == "older@example.com"
     assert statuses[1].email == "newer@example.com"
+
+
+def test_group_models_separates_families():
+    from antigravity_manager.cooldown import group_models
+    m1 = ModelCooldown("GEMINI MODELS (Gemini 3.1 Pro (High))", 98, False, None, 3600)
+    m2 = ModelCooldown("CLAUDE AND GPT MODELS (Claude Opus 4.6 (Thinking))", 98, False, None, 3600)
+    
+    grouped = group_models((m1, m2))
+    assert len(grouped) == 2
+    assert grouped[0] == m1
+    assert grouped[1] == m2
+
