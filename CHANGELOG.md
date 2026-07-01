@@ -1,5 +1,9 @@
 # Changelog
 
+## [16.0.0] - 2026-07-01
+### Features
+- add token fingerprint validation, safety restore guards, and improve model grouping
+
 ## [15.0.0] - 2026-06-30
 ### Other Changes
 - update
